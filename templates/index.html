@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+
+<title>채용공고</title>
+
+<style>
+
+body {
+    font-family: sans-serif;
+    margin: 30px;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 20px;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 10px;
+}
+
+th {
+    background: #f5f5f5;
+}
+
+form.filter {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+form.filter input, form.filter select {
+    padding: 6px 8px;
+}
+
+.count {
+    color: #666;
+    margin-top: 10px;
+}
+
+.view-tabs {
+    margin-top: 15px;
+}
+
+.view-tabs a {
+    padding: 6px 12px;
+    margin-right: 6px;
+    text-decoration: none;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    color: #333;
+}
+
+.view-tabs a.active {
+    background: #333;
+    color: #fff;
+    border-color: #333;
+}
+
+.status-form select, .memo-form input[type="text"] {
+    padding: 4px 6px;
+}
+
+.memo-form {
+    display: flex;
+    gap: 4px;
+}
+
+.memo-form input[type="text"] {
+    width: 140px;
+}
+
+.company-group {
+    margin-top: 30px;
+}
+
+.company-group h3 {
+    margin-bottom: 4px;
+}
+
+.company-group .company-count {
+    color: #666;
+    font-weight: normal;
+    font-size: 0.85em;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h2>채용공고 목록</h2>
+
+<form class="filter" method="get" action="/">
+
+    <input type="text" name="region" placeholder="지역 (예: 울산)" value="{{ selected_region }}">
+
+    <input type="text" name="keyword" placeholder="회사명/제목 검색" value="{{ selected_keyword }}">
+
+    <select name="condition_name">
+        <option value="">전체 조건</option>
+        {% for name in condition_names %}
+        <option value="{{ name }}" {% if name == selected_condition %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="status">
+        <option value="">전체 상태</option>
+        {% for choice in status_choices %}
+        <option value="{{ choice }}" {% if choice == selected_status %}selected{% endif %}>{{ choice }}</option>
+        {% endfor %}
+    </select>
+
+    <button type="submit">필터 적용</button>
+    <a href="/">초기화</a>
+
+</form>
+
+<p class="count">총 {{ jobs|length }}건</p>
+
+<div class="view-tabs">
+    <a class="{% if view == 'list' %}active{% endif %}"
+       href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, view='list') }}">목록 보기</a>
+    <a class="{% if view == 'company' %}active{% endif %}"
+       href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, view='company') }}">회사별 보기</a>
+</div>
+
+{% macro status_cell(job) %}
+<td class="status-form">
+    <form method="post" action="{{ url_for('set_status', job_id=job.id) }}">
+        <input type="hidden" name="region" value="{{ selected_region }}">
+        <input type="hidden" name="keyword" value="{{ selected_keyword }}">
+        <input type="hidden" name="condition_name" value="{{ selected_condition }}">
+        <input type="hidden" name="filter_status" value="{{ selected_status }}">
+        <input type="hidden" name="view" value="{{ view }}">
+        <select name="new_status" onchange="this.form.submit()">
+            {% for choice in status_choices %}
+            <option value="{{ choice }}" {% if choice == job.status %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+        </select>
+    </form>
+</td>
+{% endmacro %}
+
+{% macro memo_cell(job) %}
+<td>
+    <form class="memo-form" method="post" action="{{ url_for('set_memo', job_id=job.id) }}">
+        <input type="hidden" name="region" value="{{ selected_region }}">
+        <input type="hidden" name="keyword" value="{{ selected_keyword }}">
+        <input type="hidden" name="condition_name" value="{{ selected_condition }}">
+        <input type="hidden" name="filter_status" value="{{ selected_status }}">
+        <input type="hidden" name="view" value="{{ view }}">
+        <input type="text" name="memo" value="{{ job.memo or '' }}" placeholder="메모">
+        <button type="submit">저장</button>
+    </form>
+</td>
+{% endmacro %}
+
+{% macro job_row(no, job, show_company) %}
+<tr>
+    <td>{{ no }}</td>
+    {% if show_company %}<td>{{ job.company }}</td>{% endif %}
+    <td>{{ job.title }}</td>
+    <td>{{ job.location }}</td>
+    <td>{{ job.career or "-" }}</td>
+    <td>{{ job.education or "-" }}</td>
+    <td>{{ job.condition_name or "-" }}</td>
+    {{ status_cell(job) }}
+    <td>{{ job.applied_at.strftime('%Y-%m-%d') if job.applied_at else "-" }}</td>
+    {{ memo_cell(job) }}
+    <td><a href="{{ job.link }}" target="_blank">바로가기</a></td>
+</tr>
+{% endmacro %}
+
+{% if view == 'company' %}
+
+    {% for company, company_jobs in jobs|groupby('company') %}
+    <div class="company-group">
+        <h3>{{ company }} <span class="company-count">({{ company_jobs|length }}건)</span></h3>
+        <table>
+            <tr>
+                <th>No</th>
+                <th>제목</th>
+                <th>지역</th>
+                <th>경력/근무형태</th>
+                <th>학력</th>
+                <th>수집 조건</th>
+                <th>상태</th>
+                <th>지원일</th>
+                <th>메모</th>
+                <th>링크</th>
+            </tr>
+            {% for job in company_jobs %}
+                {{ job_row(loop.index, job, false) }}
+            {% endfor %}
+        </table>
+    </div>
+    {% endfor %}
+
+{% else %}
+
+    <table>
+        <tr>
+            <th>No</th>
+            <th>회사</th>
+            <th>제목</th>
+            <th>지역</th>
+            <th>경력/근무형태</th>
+            <th>학력</th>
+            <th>수집 조건</th>
+            <th>상태</th>
+            <th>지원일</th>
+            <th>메모</th>
+            <th>링크</th>
+        </tr>
+        {% for job in jobs %}
+            {{ job_row(loop.index, job, true) }}
+        {% endfor %}
+    </table>
+
+{% endif %}
+
+</body>
+
+</html>
