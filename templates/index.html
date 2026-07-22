@@ -131,6 +131,8 @@ form.filter input, form.filter select {
 <div class="navbar">
     <div class="nav-links">
         <a href="{{ url_for('crawl') }}">크롤링 실행</a>
+        <a href="{{ url_for('schedule_settings') }}">자동 크롤링 설정</a>
+        <a href="{{ url_for('guide') }}">자소서 가이드</a>
     </div>
     <div class="user">
         {{ username }}님
@@ -209,7 +211,7 @@ form.filter input, form.filter select {
         <input type="hidden" name="condition_name" value="{{ selected_condition }}">
         <input type="hidden" name="filter_status" value="{{ selected_status }}">
         <input type="hidden" name="view" value="{{ view }}">
-        <input type="text" name="memo" value="{{ job.memo or '' }}" placeholder="메모">
+        <input type="text" name="memo" value="{{ job.memo or '' }}" placeholder="메모 (지원하고 싶은 직무/강조 포인트)">
         <button type="submit">저장</button>
     </form>
 </td>

@@ -5,7 +5,7 @@
 
 <meta charset="utf-8">
 
-<title>크롤링 실행</title>
+<title>자동 크롤링 설정</title>
 
 <style>
 
@@ -57,6 +57,16 @@ h2 {
     font-weight: bold;
 }
 
+.enable-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.enable-row label {
+    font-weight: bold;
+}
+
 .checkbox-group {
     display: flex;
     flex-wrap: wrap;
@@ -80,6 +90,15 @@ h2 {
     margin-bottom: 16px;
 }
 
+.flash {
+    color: #060;
+    background: #eafaf0;
+    border: 1px solid #b6e6c9;
+    padding: 10px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+}
+
 button {
     padding: 10px 20px;
     cursor: pointer;
@@ -97,7 +116,7 @@ button {
 
 <div class="navbar">
     <div class="nav-links">
-        <a href="{{ url_for('schedule_settings') }}">자동 크롤링 설정</a>
+        <a href="{{ url_for('crawl') }}">크롤링 실행</a>
         <a href="{{ url_for('guide') }}">자소서 가이드</a>
     </div>
     <div class="user">
@@ -108,17 +127,41 @@ button {
     </div>
 </div>
 
-<h2>크롤링 실행</h2>
-<p class="hint">조건을 선택하고 실행하면 선택한 모든 조합에 대해 즉시 크롤링이 진행됩니다. 완료까지 시간이 걸릴 수 있습니다.</p>
+<h2>자동 크롤링 설정</h2>
+<p class="hint">
+    사용을 켜고 매일 실행할 시각과 조건을 정하면, 서버가 켜져 있는 동안 매일 그 시각에 자동으로 크롤링합니다.
+    설정하지 않으면(기본값) 자동으로 실행되지 않습니다.
+</p>
+
+{% with messages = get_flashed_messages() %}
+    {% if messages %}
+        {% for message in messages %}
+        <p class="flash">{{ message }}</p>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
 
 {% if error %}
 <p class="error">{{ error }}</p>
 {% endif %}
 
-<form method="post" action="{{ url_for('crawl') }}">
+<form method="post" action="{{ url_for('schedule_settings') }}">
 
     <div class="field">
-        <label>직무 <span class="required">(필수, 1개 이상 선택)</span></label>
+        <div class="enable-row">
+            <input type="checkbox" id="enabled" name="enabled"
+                {% if schedule_enabled %}checked{% endif %}>
+            <label for="enabled">자동 크롤링 사용</label>
+        </div>
+    </div>
+
+    <div class="field">
+        <label for="schedule_time">실행 시각</label>
+        <input type="time" id="schedule_time" name="schedule_time" value="{{ schedule_time }}">
+    </div>
+
+    <div class="field">
+        <label>직무 <span class="required">(사용 시 필수, 1개 이상 선택)</span></label>
         <div class="checkbox-group">
             {% for name in job_categories %}
             <label>
@@ -135,7 +178,8 @@ button {
         <div class="checkbox-group">
             {% for name in locations %}
             <label>
-                <input type="checkbox" name="location" value="{{ name }}">
+                <input type="checkbox" name="location" value="{{ name }}"
+                    {% if name in selected_locations %}checked{% endif %}>
                 {{ name }}
             </label>
             {% endfor %}
@@ -147,7 +191,8 @@ button {
         <div class="checkbox-group">
             {% for name in experiences %}
             <label>
-                <input type="checkbox" name="experience" value="{{ name }}">
+                <input type="checkbox" name="experience" value="{{ name }}"
+                    {% if name in selected_experiences %}checked{% endif %}>
                 {{ name }}
             </label>
             {% endfor %}
@@ -159,7 +204,8 @@ button {
         <div class="checkbox-group">
             {% for name in educations %}
             <label>
-                <input type="checkbox" name="education" value="{{ name }}">
+                <input type="checkbox" name="education" value="{{ name }}"
+                    {% if name in selected_educations %}checked{% endif %}>
                 {{ name }}
             </label>
             {% endfor %}
@@ -171,14 +217,15 @@ button {
         <div class="checkbox-group">
             {% for name in job_types %}
             <label>
-                <input type="checkbox" name="job_type" value="{{ name }}">
+                <input type="checkbox" name="job_type" value="{{ name }}"
+                    {% if name in selected_job_types %}checked{% endif %}>
                 {{ name }}
             </label>
             {% endfor %}
         </div>
     </div>
 
-    <button type="submit">크롤링 시작</button>
+    <button type="submit">저장</button>
 
 </form>
 
