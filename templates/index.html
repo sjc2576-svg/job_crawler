@@ -91,11 +91,62 @@ form.filter input, form.filter select {
     font-size: 0.85em;
 }
 
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.navbar .nav-links {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.navbar .user {
+    color: #666;
+}
+
+.navbar form {
+    display: inline;
+}
+
+.flash {
+    color: #060;
+    background: #eafaf0;
+    border: 1px solid #b6e6c9;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 16px;
+}
+
 </style>
 
 </head>
 
 <body>
+
+<div class="navbar">
+    <div class="nav-links">
+        <a href="{{ url_for('crawl') }}">크롤링 실행</a>
+    </div>
+    <div class="user">
+        {{ username }}님
+        <form method="post" action="{{ url_for('logout') }}">
+            <button type="submit">로그아웃</button>
+        </form>
+    </div>
+</div>
+
+{% with messages = get_flashed_messages() %}
+    {% if messages %}
+        {% for message in messages %}
+        <p class="flash">{{ message }}</p>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
 
 <h2>채용공고 목록</h2>
 

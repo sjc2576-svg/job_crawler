@@ -342,18 +342,12 @@ def select_from_menu(label: str, options: dict) -> list:
         print("잘못된 입력입니다. 다시 입력해주세요.")
 
 
-def prompt_condition() -> list:
+def build_conditions(cat_sel, loc_sel, exp_sel, edu_sel, type_sel) -> list:
     """
-    터미널에서 각 항목을 (복수 선택 가능하게) 입력받아,
-    선택된 값들의 모든 조합(cartesian product)을 condition dict 리스트로 반환.
+    각 항목별로 선택된 (name, code) 튜플 리스트를 받아,
+    그 조합(cartesian product) 전체를 condition dict 리스트로 반환.
+    터미널(prompt_condition)과 웹(app.py의 /crawl)에서 공용으로 사용.
     """
-
-    cat_sel = select_from_menu("직무", JOB_CATEGORY)
-    loc_sel = select_from_menu("지역", LOCATION)
-    exp_sel = select_from_menu("경력", EXPERIENCE)
-    edu_sel = select_from_menu("학력", EDUCATION)
-    type_sel = select_from_menu("근무형태", JOB_TYPE)
-
     conditions = []
     for cat_name, cat_code in cat_sel:
         for loc_name, loc_code in loc_sel:
@@ -371,6 +365,23 @@ def prompt_condition() -> list:
                             "edu_name": edu_name,
                             "type_name": type_name,
                         })
+
+    return conditions
+
+
+def prompt_condition() -> list:
+    """
+    터미널에서 각 항목을 (복수 선택 가능하게) 입력받아,
+    선택된 값들의 모든 조합(cartesian product)을 condition dict 리스트로 반환.
+    """
+
+    cat_sel = select_from_menu("직무", JOB_CATEGORY)
+    loc_sel = select_from_menu("지역", LOCATION)
+    exp_sel = select_from_menu("경력", EXPERIENCE)
+    edu_sel = select_from_menu("학력", EDUCATION)
+    type_sel = select_from_menu("근무형태", JOB_TYPE)
+
+    conditions = build_conditions(cat_sel, loc_sel, exp_sel, edu_sel, type_sel)
 
     print(f"\n>> 조합된 조건 {len(conditions)}개:")
     for c in conditions:
@@ -403,6 +414,29 @@ def run_conditions(driver, db: DB, conditions: list):
         total_saved += saved
         total_found += found
 
+    return total_saved, total_found
+
+
+def run_web_conditions(conditions: list):
+    """
+    app.py의 /crawl 라우트에서 호출: 웹에서 선택한 조건으로 즉시 크롤링을 실행.
+    (신규 저장 건수, 발견 건수) 반환
+    """
+    if not conditions:
+        return 0, 0
+
+    logger.info(f"=== 웹 요청 크롤링 시작 (조건 {len(conditions)}개) ===")
+
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+    db = DB()
+
+    try:
+        total_saved, total_found = run_conditions(driver, db, conditions)
+    finally:
+        db.close()
+        driver.quit()
+
+    logger.info(f"=== 웹 요청 크롤링 완료: 발견 {total_found}건 / 신규 저장 {total_saved}건 ===")
     return total_saved, total_found
 
 

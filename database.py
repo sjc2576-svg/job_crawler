@@ -14,10 +14,23 @@ class DB:
         self.dict_cursor = self.conn.cursor(dictionary=True)
         self._ensure_table()
         self._ensure_unique_index()
+        self._ensure_users_table()
 
     # ------------------------------------------------------------
     # 테이블 / 인덱스 준비
     # ------------------------------------------------------------
+    def _ensure_users_table(self):
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_user (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(100) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            job_categories VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        self.conn.commit()
+
     def _ensure_table(self):
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS job_posting (
@@ -196,6 +209,35 @@ class DB:
         ORDER BY condition_name
         """)
         return [row[0] for row in self.cursor.fetchall()]
+
+    # ------------------------------------------------------------
+    # 회원 관리
+    # ------------------------------------------------------------
+    def create_user(self, username, password_hash, job_categories):
+        """
+        새 회원을 등록. job_categories는 콤마로 구분된 문자열(예: '생산,기획전략').
+        username이 이미 존재하면 mysql.connector.errors.IntegrityError 발생.
+        """
+        self.cursor.execute(
+            "INSERT INTO app_user (username, password_hash, job_categories) VALUES (%s, %s, %s)",
+            (username, password_hash, job_categories),
+        )
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def get_user_by_username(self, username):
+        self.dict_cursor.execute(
+            "SELECT id, username, password_hash, job_categories FROM app_user WHERE username = %s",
+            (username,),
+        )
+        return self.dict_cursor.fetchone()
+
+    def get_user_by_id(self, user_id):
+        self.dict_cursor.execute(
+            "SELECT id, username, password_hash, job_categories FROM app_user WHERE id = %s",
+            (user_id,),
+        )
+        return self.dict_cursor.fetchone()
 
     def close(self):
         self.cursor.close()

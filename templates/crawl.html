@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+
+<title>크롤링 실행</title>
+
+<style>
+
+body {
+    font-family: sans-serif;
+    margin: 30px;
+    max-width: 700px;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.navbar .user {
+    color: #666;
+}
+
+.navbar form {
+    display: inline;
+}
+
+h2 {
+    margin-bottom: 6px;
+}
+
+.hint {
+    color: #666;
+    margin-bottom: 20px;
+}
+
+.field {
+    margin-bottom: 20px;
+}
+
+.field > label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+.checkbox-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.checkbox-group label {
+    font-weight: normal;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.required {
+    color: #c00;
+    font-weight: normal;
+}
+
+.error {
+    color: #c00;
+    margin-bottom: 16px;
+}
+
+button {
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+.back-link {
+    margin-top: 16px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="navbar">
+    <div class="user">{{ username }}님</div>
+    <form method="post" action="{{ url_for('logout') }}">
+        <button type="submit">로그아웃</button>
+    </form>
+</div>
+
+<h2>크롤링 실행</h2>
+<p class="hint">조건을 선택하고 실행하면 선택한 모든 조합에 대해 즉시 크롤링이 진행됩니다. 완료까지 시간이 걸릴 수 있습니다.</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="{{ url_for('crawl') }}">
+
+    <div class="field">
+        <label>직무 <span class="required">(필수, 1개 이상 선택)</span></label>
+        <div class="checkbox-group">
+            {% for name in job_categories %}
+            <label>
+                <input type="checkbox" name="job_category" value="{{ name }}"
+                    {% if name in selected_job_categories %}checked{% endif %}>
+                {{ name }}
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="field">
+        <label>지역 <span class="required">(선택 안 하면 전국)</span></label>
+        <div class="checkbox-group">
+            {% for name in locations %}
+            <label>
+                <input type="checkbox" name="location" value="{{ name }}">
+                {{ name }}
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="field">
+        <label>경력 <span class="required">(선택 안 하면 전체)</span></label>
+        <div class="checkbox-group">
+            {% for name in experiences %}
+            <label>
+                <input type="checkbox" name="experience" value="{{ name }}">
+                {{ name }}
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="field">
+        <label>학력 <span class="required">(선택 안 하면 전체)</span></label>
+        <div class="checkbox-group">
+            {% for name in educations %}
+            <label>
+                <input type="checkbox" name="education" value="{{ name }}">
+                {{ name }}
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="field">
+        <label>근무형태 <span class="required">(선택 안 하면 전체)</span></label>
+        <div class="checkbox-group">
+            {% for name in job_types %}
+            <label>
+                <input type="checkbox" name="job_type" value="{{ name }}">
+                {{ name }}
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <button type="submit">크롤링 시작</button>
+
+</form>
+
+<p class="back-link"><a href="{{ url_for('index') }}">채용공고 목록으로 돌아가기</a></p>
+
+</body>
+
+</html>
