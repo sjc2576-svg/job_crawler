@@ -15,6 +15,7 @@ from config import SECRET_KEY, JOB_CATEGORY, LOCATION, EXPERIENCE, EDUCATION, JO
 from crawler import build_conditions, run_web_conditions
 from job_matching import analyze_resume_match, JobMatchError
 from cover_letter import analyze_company, generate_cover_letter, revise_cover_letter, CoverLetterError
+from company_research import analyze_company_research, parse_sections, SECTION_ORDER, CompanyResearchError
 from crypto_utils import encrypt_secret, decrypt_secret
 
 app = Flask(__name__)
@@ -615,6 +616,54 @@ def cover_letter_page(job_id):
         company_analysis=company_analysis,
         draft=draft,
         interaction_id=interaction_id,
+        error=error,
+    )
+
+
+@app.route("/company-analysis", methods=["GET", "POST"])
+@login_required
+def company_analysis_page():
+    company = request.values.get("company", "").strip()
+
+    error = None
+    analysis_text = None
+    sections = {}
+    updated_at = None
+
+    db = DB()
+    try:
+        companies = db.get_companies(session["user_id"])
+
+        if request.method == "POST":
+            if not company:
+                error = "조사할 회사명을 입력하거나 목록에서 선택해주세요."
+            else:
+                api_key = decrypt_secret(db.get_api_key_encrypted(session["user_id"]))
+                try:
+                    analysis_text, sections, interaction_id = analyze_company_research(company, api_key)
+                except CompanyResearchError as e:
+                    error = str(e)
+                else:
+                    db.save_company_analysis(session["user_id"], company, analysis_text, interaction_id)
+
+        if not error and company and analysis_text is None:
+            saved = db.get_company_analysis(session["user_id"], company)
+            if saved:
+                analysis_text = saved["analysis"]
+                sections = parse_sections(analysis_text or "")
+                updated_at = saved["updated_at"]
+    finally:
+        db.close()
+
+    return render_template(
+        "company_analysis.html",
+        username=session.get("username"),
+        companies=companies,
+        selected_company=company,
+        analysis_text=analysis_text,
+        sections=sections,
+        section_order=SECTION_ORDER,
+        updated_at=updated_at,
         error=error,
     )
 

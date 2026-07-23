@@ -20,6 +20,7 @@ class DB:
         self._ensure_cover_letter_columns()
         self._migrate_legacy_status_to_per_user()
         self._ensure_schedule_table()
+        self._ensure_company_analysis_table()
 
     # ------------------------------------------------------------
     # 테이블 / 인덱스 준비
@@ -107,6 +108,24 @@ class DB:
             if not exists:
                 self.cursor.execute(ddl)
                 self.conn.commit()
+
+    def _ensure_company_analysis_table(self):
+        """AI 기업 분석(사업/최근뉴스/매출/성장성/복지/장단점) 결과를 계정+회사명
+        기준으로 저장하는 테이블. 특정 공고가 아니라 회사 자체에 대한 조사라서
+        user_job_state가 아니라 별도 테이블에 둔다."""
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS company_analysis (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            company VARCHAR(255) NOT NULL,
+            analysis TEXT,
+            interaction_id VARCHAR(100),
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_user_company (user_id, company(191)),
+            FOREIGN KEY (user_id) REFERENCES app_user(id)
+        )
+        """)
+        self.conn.commit()
 
     def _migrate_legacy_status_to_per_user(self):
         """
@@ -415,6 +434,38 @@ class DB:
                 cover_letter = VALUES(cover_letter),
                 cover_letter_interaction_id = VALUES(cover_letter_interaction_id)
         """, (user_id, job_id, company_analysis, cover_letter, interaction_id))
+        self.conn.commit()
+
+    # ------------------------------------------------------------
+    # AI 기업 분석 - 계정+회사명 기준 저장 (특정 공고가 아니라 회사 자체)
+    # ------------------------------------------------------------
+    def get_companies(self, user_id):
+        """이 계정이 수집한 공고에 등장하는 회사명 목록 (기업 분석 선택용)"""
+        self.cursor.execute("""
+        SELECT DISTINCT company
+        FROM job_posting
+        WHERE user_id = %s AND company IS NOT NULL AND company != ''
+        ORDER BY company
+        """, (user_id,))
+        return [row[0] for row in self.cursor.fetchall()]
+
+    def get_company_analysis(self, user_id, company):
+        """이 계정이 이 회사에 대해 생성해둔 기업 분석을 반환. 없으면 None."""
+        self.dict_cursor.execute("""
+            SELECT company, analysis, interaction_id, updated_at
+            FROM company_analysis
+            WHERE user_id = %s AND company = %s
+        """, (user_id, company))
+        return self.dict_cursor.fetchone()
+
+    def save_company_analysis(self, user_id, company, analysis, interaction_id):
+        self.cursor.execute("""
+            INSERT INTO company_analysis (user_id, company, analysis, interaction_id)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                analysis = VALUES(analysis),
+                interaction_id = VALUES(interaction_id)
+        """, (user_id, company, analysis, interaction_id))
         self.conn.commit()
 
     def get_condition_names(self, user_id):

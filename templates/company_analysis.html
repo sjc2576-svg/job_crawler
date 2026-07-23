@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+
+<title>AI 기업 분석</title>
+
+<style>
+
+body {
+    font-family: sans-serif;
+    margin: 30px;
+    max-width: 800px;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.navbar .nav-links {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.navbar .user {
+    color: #666;
+}
+
+.navbar form {
+    display: inline;
+}
+
+h2 {
+    margin-bottom: 6px;
+}
+
+.hint {
+    color: #666;
+    margin-bottom: 20px;
+}
+
+.error {
+    color: #a33;
+    background: #fdf1f1;
+    border: 1px solid #f0c9c9;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+}
+
+.search-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 28px;
+}
+
+.search-form input[type="text"] {
+    flex: 1;
+    padding: 8px 10px;
+}
+
+button {
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+.updated-at {
+    color: #666;
+    font-size: 0.85em;
+    margin-bottom: 16px;
+}
+
+.section-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.section-card {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 14px 16px;
+}
+
+.section-card h4 {
+    margin: 0 0 8px 0;
+    border-bottom: 2px solid #333;
+    display: inline-block;
+    padding-bottom: 2px;
+}
+
+.section-card p {
+    white-space: pre-wrap;
+    line-height: 1.6;
+    margin: 0;
+}
+
+.result-box {
+    background: #fbf9ff;
+    border: 1px solid #ddd0f7;
+    border-radius: 6px;
+    padding: 16px;
+    white-space: pre-wrap;
+    line-height: 1.6;
+}
+
+.back-link {
+    margin-top: 24px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="navbar">
+    <div class="nav-links">
+        <a href="{{ url_for('crawl') }}">크롤링 실행</a>
+        <a href="{{ url_for('schedule_settings') }}">자동 크롤링 설정</a>
+        <a href="{{ url_for('job_match') }}">AI 직무 매칭</a>
+        <a href="{{ url_for('company_analysis_page') }}">기업 분석</a>
+        <a href="{{ url_for('api_key_settings') }}">API 키 설정</a>
+    </div>
+    <div class="user">
+        {{ username }}님
+        <form method="post" action="{{ url_for('logout') }}">
+            <button type="submit">로그아웃</button>
+        </form>
+    </div>
+</div>
+
+<h2>AI 기업 분석</h2>
+<p class="hint">
+    회사명을 입력하거나 목록에서 골라 "AI 분석하기"를 누르면, Gemini가 웹 검색으로
+    사업/최근 뉴스/매출/성장성/복지/장단점을 조사해줍니다. 결과는 계정+회사별로
+    저장되어 나중에 다시 방문해도 그대로 보입니다.
+    <a href="{{ url_for('api_key_settings') }}">API 키 설정</a>에 등록해둔 본인의
+    Google AI Studio API 키로 요청이 전송됩니다.
+</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form class="search-form" method="post" action="{{ url_for('company_analysis_page') }}">
+    <input type="text" name="company" list="company-list" value="{{ selected_company }}"
+           placeholder="회사명 입력 또는 목록에서 선택">
+    <datalist id="company-list">
+        {% for name in companies %}
+        <option value="{{ name }}">
+        {% endfor %}
+    </datalist>
+    <button type="submit">AI 분석하기</button>
+</form>
+
+{% if selected_company and (analysis_text or sections) %}
+
+<h3>{{ selected_company }}</h3>
+{% if updated_at %}
+<p class="updated-at">마지막 분석: {{ updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+{% endif %}
+
+{% if sections %}
+<div class="section-grid">
+    {% for title in section_order %}
+    {% if title in sections %}
+    <div class="section-card">
+        <h4>{{ title }}</h4>
+        <p>{{ sections[title] }}</p>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% else %}
+<div class="result-box">{{ analysis_text }}</div>
+{% endif %}
+
+{% endif %}
+
+<p class="back-link"><a href="{{ url_for('index') }}">채용공고 목록으로 돌아가기</a></p>
+
+</body>
+
+</html>
