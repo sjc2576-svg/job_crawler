@@ -12,14 +12,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 
 from database import DB
-from config import (
-    SEARCH_CONDITIONS,
-    JOB_CATEGORY,
-    LOCATION,
-    EXPERIENCE,
-    EDUCATION,
-    JOB_TYPE,
-)
 
 # ------------------------------------------------------------
 # 로깅 설정 (콘솔 + crawler.log 파일에 함께 기록)
@@ -138,8 +130,8 @@ def condition_matches(career_text: str, education_text: str, condition: dict) ->
     )
 
 
-def extract_jobs_on_page(driver, db: DB, condition: dict):
-    """현재 페이지에 보이는 채용공고를 추출해서, 조건에 맞는 것만 저장.
+def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
+    """현재 페이지에 보이는 채용공고를 추출해서, 조건에 맞는 것만 이 계정 소유로 저장.
     (신규 저장 건수, 발견 건수) 반환"""
     name = condition.get("name", "이름없음")
 
@@ -179,7 +171,7 @@ def extract_jobs_on_page(driver, db: DB, condition: dict):
                 continue
 
             is_new = db.insert_job(
-                title, company, location, link,
+                user_id, title, company, location, link,
                 condition_name=name,
                 career=career_text,
                 education=education_text,
@@ -253,8 +245,8 @@ def go_to_next_page(driver, next_page_num: int) -> bool:
         return False
 
 
-def crawl_condition(driver, db: DB, condition: dict):
-    """검색 조건 하나에 대해 여러 페이지를 순회하며 크롤링 + 저장.
+def crawl_condition(driver, db: DB, condition: dict, user_id: int):
+    """검색 조건 하나에 대해 여러 페이지를 순회하며 크롤링 + 이 계정 소유로 저장.
     (신규 저장 건수, 발견 건수) 반환"""
     name = condition.get("name", "이름없음")
     url = build_url(condition)
@@ -291,7 +283,7 @@ def crawl_condition(driver, db: DB, condition: dict):
     total_found = 0
 
     for page_num in range(1, MAX_PAGES + 1):
-        saved, found = extract_jobs_on_page(driver, db, condition)
+        saved, found = extract_jobs_on_page(driver, db, condition, user_id)
         total_saved += saved
         total_found += found
         logger.info(f"[{name}] {page_num}페이지: 발견 {found}건 / 신규 저장 {saved}건")
@@ -309,44 +301,11 @@ def crawl_condition(driver, db: DB, condition: dict):
     return total_saved, total_found
 
 
-def select_from_menu(label: str, options: dict) -> list:
-    """
-    options 딕셔너리(예: {"서울": 101000, "경기": 102000})를
-    번호 메뉴로 보여주고 사용자가 고른 값(들)을 리스트로 반환.
-    쉼표로 여러 번호를 입력하면 중복(복수) 선택 가능 (예: 1,3,5).
-    """
-    items = list(options.items())
-
-    print(f"\n[{label} 선택] (여러 개 고르려면 쉼표로 구분, 예: 1,3,5)")
-    for idx, (key, _value) in enumerate(items, start=1):
-        print(f"  {idx}. {key}")
-
-    while True:
-        choice = input(f"{label} 번호 입력 (엔터=1번 기본값): ").strip()
-
-        if choice == "":
-            return [items[0]]  # 기본값(첫 번째 항목, 보통 "전체")
-
-        parts = [p.strip() for p in choice.split(",") if p.strip()]
-
-        if parts and all(p.isdigit() and 1 <= int(p) <= len(items) for p in parts):
-            seen = set()
-            selected = []
-            for p in parts:
-                idx = int(p)
-                if idx not in seen:  # 같은 번호 중복 입력은 한 번만 반영
-                    seen.add(idx)
-                    selected.append(items[idx - 1])
-            return selected
-
-        print("잘못된 입력입니다. 다시 입력해주세요.")
-
-
 def build_conditions(cat_sel, loc_sel, exp_sel, edu_sel, type_sel) -> list:
     """
     각 항목별로 선택된 (name, code) 튜플 리스트를 받아,
     그 조합(cartesian product) 전체를 condition dict 리스트로 반환.
-    터미널(prompt_condition)과 웹(app.py의 /crawl)에서 공용으로 사용.
+    웹(app.py의 /crawl, 계정별 자동 스케줄)에서 사용.
     """
     conditions = []
     for cat_name, cat_code in cat_sel:
@@ -369,130 +328,38 @@ def build_conditions(cat_sel, loc_sel, exp_sel, edu_sel, type_sel) -> list:
     return conditions
 
 
-def prompt_condition() -> list:
-    """
-    터미널에서 각 항목을 (복수 선택 가능하게) 입력받아,
-    선택된 값들의 모든 조합(cartesian product)을 condition dict 리스트로 반환.
-    """
-
-    cat_sel = select_from_menu("직무", JOB_CATEGORY)
-    loc_sel = select_from_menu("지역", LOCATION)
-    exp_sel = select_from_menu("경력", EXPERIENCE)
-    edu_sel = select_from_menu("학력", EDUCATION)
-    type_sel = select_from_menu("근무형태", JOB_TYPE)
-
-    conditions = build_conditions(cat_sel, loc_sel, exp_sel, edu_sel, type_sel)
-
-    print(f"\n>> 조합된 조건 {len(conditions)}개:")
-    for c in conditions:
-        print(f"   - {c['name']}")
-
-    return conditions
-
-
-def prompt_conditions() -> list:
-    """여러 조건(조합)을 계속 추가할 수 있게 반복 입력받음"""
-    conditions = []
-
-    while True:
-        conditions.extend(prompt_condition())
-
-        more = input("\n조건을 더 추가하시겠습니까? (y/N): ").strip().lower()
-        if more != "y":
-            break
-
-    return conditions
-
-
-def run_conditions(driver, db: DB, conditions: list):
-    """조건 리스트를 순서대로 크롤링 + 저장. (신규 저장 건수, 발견 건수) 반환"""
+def run_conditions(driver, db: DB, conditions: list, user_id: int):
+    """조건 리스트를 순서대로 크롤링해서 이 계정 소유로 저장.
+    (신규 저장 건수, 발견 건수) 반환"""
     total_saved = 0
     total_found = 0
 
     for condition in conditions:
-        saved, found = crawl_condition(driver, db, condition)
+        saved, found = crawl_condition(driver, db, condition, user_id)
         total_saved += saved
         total_found += found
 
     return total_saved, total_found
 
 
-def run_web_conditions(conditions: list):
+def run_web_conditions(conditions: list, user_id: int):
     """
-    app.py의 /crawl 라우트에서 호출: 웹에서 선택한 조건으로 즉시 크롤링을 실행.
-    (신규 저장 건수, 발견 건수) 반환
+    app.py의 /crawl 라우트(및 계정별 자동 스케줄)에서 호출: 로그인한 계정 소유로
+    즉시 크롤링을 실행. (신규 저장 건수, 발견 건수) 반환
     """
     if not conditions:
         return 0, 0
 
-    logger.info(f"=== 웹 요청 크롤링 시작 (조건 {len(conditions)}개) ===")
+    logger.info(f"=== 웹 요청 크롤링 시작 (계정 {user_id} / 조건 {len(conditions)}개) ===")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
     db = DB()
 
     try:
-        total_saved, total_found = run_conditions(driver, db, conditions)
+        total_saved, total_found = run_conditions(driver, db, conditions, user_id)
     finally:
         db.close()
         driver.quit()
 
     logger.info(f"=== 웹 요청 크롤링 완료: 발견 {total_found}건 / 신규 저장 {total_saved}건 ===")
     return total_saved, total_found
-
-
-def run_scheduled():
-    """
-    터미널 입력 없이 config.py의 SEARCH_CONDITIONS로 크롤링 (scheduler.py에서 호출).
-    대화형 main()과 달리 기존 데이터를 지우지 않고 새 공고만 추가로 저장한다.
-    (신규 저장 건수, 발견 건수) 반환
-    """
-    if not SEARCH_CONDITIONS:
-        logger.warning("config.py의 SEARCH_CONDITIONS가 비어있어 자동 크롤링할 조건이 없습니다.")
-        return 0, 0
-
-    logger.info(f"=== 자동 크롤링 시작 (조건 {len(SEARCH_CONDITIONS)}개) ===")
-
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
-    db = DB()
-
-    try:
-        total_saved, total_found = run_conditions(driver, db, SEARCH_CONDITIONS)
-    finally:
-        db.close()
-        driver.quit()
-
-    logger.info(f"=== 자동 크롤링 완료: 발견 {total_found}건 / 신규 저장 {total_saved}건 ===")
-    return total_saved, total_found
-
-
-def main():
-    print("검색 조건을 직접 입력해주세요.\n")
-    conditions = prompt_conditions()
-
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
-    db = DB()
-
-    existing = db.count_jobs()
-    if existing > 0:
-        answer = input(
-            f"\n기존에 저장된 채용공고가 {existing}건 있습니다. "
-            f"전부 삭제하고 새로 시작할까요? (상태/메모도 함께 삭제됩니다) (y/N): "
-        ).strip().lower()
-
-        if answer == "y":
-            db.clear_jobs()
-            logger.info(f"기존에 저장된 채용공고 {existing}건을 모두 삭제했습니다. 새로 검색을 시작합니다.")
-        else:
-            logger.info("기존 데이터를 유지한 채로, 새로 발견되는 공고만 추가합니다.")
-
-    try:
-        total_saved, total_found = run_conditions(driver, db, conditions)
-    finally:
-        db.close()
-        driver.quit()
-
-    logger.info(f"전체 완료: 발견 {total_found}건 / 신규 저장 {total_saved}건")
-
-
-if __name__ == "__main__":
-    main()

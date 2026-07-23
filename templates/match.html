@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+
+<title>AI 직무 매칭</title>
+
+<style>
+
+body {
+    font-family: sans-serif;
+    margin: 30px;
+    max-width: 1000px;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.navbar .nav-links {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.navbar .user {
+    color: #666;
+}
+
+.navbar form {
+    display: inline;
+}
+
+h2 {
+    margin-bottom: 6px;
+}
+
+h4 {
+    margin: 0 0 10px 0;
+}
+
+.hint {
+    color: #666;
+    margin-bottom: 20px;
+}
+
+.error {
+    color: #a33;
+    background: #fdf1f1;
+    border: 1px solid #f0c9c9;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+}
+
+form.filter {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+form.filter input, form.filter select {
+    padding: 6px 8px;
+}
+
+.select-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    color: #666;
+    font-size: 0.9em;
+}
+
+.select-toolbar button {
+    padding: 4px 10px;
+    font-size: 0.9em;
+}
+
+.job-picker {
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    margin-bottom: 16px;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+
+th {
+    background: #f5f5f5;
+    position: sticky;
+    top: 0;
+}
+
+.upload-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 28px;
+}
+
+button {
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+section {
+    margin-bottom: 28px;
+}
+
+section h3 {
+    margin-bottom: 10px;
+    border-bottom: 2px solid #333;
+    display: inline-block;
+    padding-bottom: 2px;
+}
+
+.skill-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.skill-tags span {
+    background: #eef3ff;
+    border: 1px solid #cddcff;
+    border-radius: 14px;
+    padding: 4px 12px;
+    font-size: 0.9em;
+}
+
+.summary {
+    line-height: 1.6;
+}
+
+.match-percent {
+    font-weight: bold;
+}
+
+.match-high { color: #060; }
+.match-mid { color: #a60; }
+.match-low { color: #999; }
+
+.missing-tags span {
+    display: inline-block;
+    background: #fdf1f1;
+    border: 1px solid #f0c9c9;
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 0.85em;
+    margin: 2px 4px 2px 0;
+}
+
+.back-link {
+    margin-top: 16px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="navbar">
+    <div class="nav-links">
+        <a href="{{ url_for('crawl') }}">크롤링 실행</a>
+        <a href="{{ url_for('schedule_settings') }}">자동 크롤링 설정</a>
+        <a href="{{ url_for('api_key_settings') }}">API 키 설정</a>
+    </div>
+    <div class="user">
+        {{ username }}님
+        <form method="post" action="{{ url_for('logout') }}">
+            <button type="submit">로그아웃</button>
+        </form>
+    </div>
+</div>
+
+<h2>AI 직무 매칭</h2>
+<p class="hint">
+    아래에서 비교할 채용공고를 고르고 이력서(PDF)를 업로드하면, Gemini가 이력서에서
+    기술 스택을 분석해서 선택한 공고들과의 매칭률과 부족한 스킬을 알려줍니다
+    (한 번에 최대 100건까지 분석). 업로드한 PDF는 서버에 저장하지 않고 분석 직후
+    버립니다. <a href="{{ url_for('api_key_settings') }}">API 키 설정</a>에 등록해둔
+    본인의 Google AI Studio API 키로 요청이 전송됩니다.
+</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<h4>1. 비교할 공고 필터링</h4>
+<form class="filter" method="get" action="{{ url_for('job_match') }}">
+
+    <input type="text" name="region" placeholder="지역 (예: 울산)" value="{{ selected_region }}">
+
+    <input type="text" name="keyword" placeholder="회사명/제목 검색" value="{{ selected_keyword }}">
+
+    <select name="condition_name">
+        <option value="">전체 조건</option>
+        {% for name in condition_names %}
+        <option value="{{ name }}" {% if name == selected_condition %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="status">
+        <option value="">전체 상태</option>
+        {% for choice in status_choices %}
+        <option value="{{ choice }}" {% if choice == selected_status %}selected{% endif %}>{{ choice }}</option>
+        {% endfor %}
+    </select>
+
+    <button type="submit">필터 적용</button>
+    <a href="{{ url_for('job_match') }}">초기화</a>
+
+</form>
+
+<form method="post" action="{{ url_for('job_match') }}" enctype="multipart/form-data">
+
+    <!-- 필터는 그대로 유지한 채 제출되도록 숨은 필드로 함께 보낸다 -->
+    <input type="hidden" name="region" value="{{ selected_region }}">
+    <input type="hidden" name="keyword" value="{{ selected_keyword }}">
+    <input type="hidden" name="condition_name" value="{{ selected_condition }}">
+    <input type="hidden" name="status" value="{{ selected_status }}">
+
+    <h4>2. 비교할 공고 선택 (총 {{ jobs|length }}건)</h4>
+
+    {% if jobs %}
+    <div class="select-toolbar">
+        <button type="button" onclick="document.querySelectorAll('.job-picker input[type=checkbox]').forEach(c => c.checked = true)">전체 선택</button>
+        <button type="button" onclick="document.querySelectorAll('.job-picker input[type=checkbox]').forEach(c => c.checked = false)">전체 해제</button>
+    </div>
+
+    <div class="job-picker">
+        <table>
+            <tr>
+                <th></th>
+                <th>회사</th>
+                <th>제목</th>
+                <th>지역</th>
+                <th>경력/근무형태</th>
+                <th>학력</th>
+                <th>수집 조건</th>
+                <th>상태</th>
+            </tr>
+            {% for job in jobs %}
+            <tr>
+                <td><input type="checkbox" name="job_ids" value="{{ job.id }}" {% if job.id in selected_ids %}checked{% endif %}></td>
+                <td>{{ job.company }}</td>
+                <td>{{ job.title }}</td>
+                <td>{{ job.location }}</td>
+                <td>{{ job.career or "-" }}</td>
+                <td>{{ job.education or "-" }}</td>
+                <td>{{ job.condition_name or "-" }}</td>
+                <td>{{ job.status }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    {% else %}
+    <p class="hint">조건에 맞는 채용공고가 없습니다. 필터를 조정하거나 먼저 크롤링을 실행해주세요.</p>
+    {% endif %}
+
+    <h4>3. 이력서 업로드 후 분석</h4>
+    <div class="upload-row">
+        <input type="file" name="resume" accept="application/pdf">
+        <button type="submit">분석하기</button>
+    </div>
+
+</form>
+
+{% if result %}
+
+<section>
+    <h3>이력서에서 확인된 기술/경험</h3>
+    {% if result.extracted_skills %}
+    <div class="skill-tags">
+        {% for skill in result.extracted_skills %}
+        <span>{{ skill }}</span>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="hint">확인된 항목이 없습니다.</p>
+    {% endif %}
+</section>
+
+<section>
+    <h3>전체 총평</h3>
+    <p class="summary">{{ result.overall_summary }}</p>
+</section>
+
+<section>
+    <h3>공고별 매칭 결과</h3>
+    {% if result.matches %}
+    <table>
+        <tr>
+            <th>매칭률</th>
+            <th>회사</th>
+            <th>공고 제목</th>
+            <th>부족한 스킬</th>
+            <th>사유</th>
+        </tr>
+        {% for m in result.matches %}
+        <tr>
+            <td class="match-percent {% if m.match_percent >= 70 %}match-high{% elif m.match_percent >= 40 %}match-mid{% else %}match-low{% endif %}">
+                {{ m.match_percent }}%
+            </td>
+            <td>{{ m.job.company }}</td>
+            <td><a href="{{ m.job.link }}" target="_blank" rel="noopener">{{ m.job.title }}</a></td>
+            <td class="missing-tags">
+                {% for skill in m.missing_skills %}
+                <span>{{ skill }}</span>
+                {% else %}
+                -
+                {% endfor %}
+            </td>
+            <td>{{ m.reason }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="hint">매칭 결과가 없습니다.</p>
+    {% endif %}
+</section>
+
+{% endif %}
+
+<p class="back-link"><a href="{{ url_for('index') }}">채용공고 목록으로 돌아가기</a></p>
+
+</body>
+
+</html>

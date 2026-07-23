@@ -13,10 +13,16 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import DB, STATUS_CHOICES
 from config import SECRET_KEY, JOB_CATEGORY, LOCATION, EXPERIENCE, EDUCATION, JOB_TYPE
 from crawler import build_conditions, run_web_conditions
-from guideline import build_guideline
+from job_matching import analyze_resume_match, JobMatchError
+from cover_letter import analyze_company, generate_cover_letter, revise_cover_letter, CoverLetterError
+from crypto_utils import encrypt_secret, decrypt_secret
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 이력서 업로드 용량 제한 (8MB)
+# debug=False로 실행 중이라 기본값이면 템플릿을 최초 1회만 읽고 메모리에 캐싱한다.
+# 그러면 templates/*.html을 고쳐도 서버를 재시작하기 전까지는 화면에 반영되지 않는다.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 
 def _selection_to_conditions(cat_names, loc_names, exp_names, edu_names, type_names):
@@ -58,7 +64,7 @@ def _run_due_schedules():
             conditions = _selection_to_conditions(
                 cat_names, loc_names, exp_names, edu_names, type_names
             )
-            run_web_conditions(conditions)
+            run_web_conditions(conditions, sched["user_id"])
 
         db = DB()
         try:
@@ -176,6 +182,9 @@ def logout():
     return redirect(url_for("login"))
 
 
+PAGE_SIZE = 50
+
+
 @app.route("/")
 @login_required
 def index():
@@ -187,9 +196,15 @@ def index():
     view = request.args.get("view", "list").strip() or "list"
 
     try:
+        page = int(request.args.get("page", "1"))
+    except ValueError:
+        page = 1
+    page = max(1, page)
+
+    try:
         db = DB()
 
-        jobs = db.get_jobs(
+        all_jobs = db.get_jobs(
             session["user_id"],
             region=region,
             keyword=keyword,
@@ -197,13 +212,22 @@ def index():
             status=status,
             group_by_company=(view == "company"),
         )
-        condition_names = db.get_condition_names()
+        condition_names = db.get_condition_names(session["user_id"])
 
         db.close()
+
+        total_count = len(all_jobs)
+        total_pages = max(1, -(-total_count // PAGE_SIZE))  # 올림 나눗셈
+        page = min(page, total_pages)
+        start = (page - 1) * PAGE_SIZE
+        jobs = all_jobs[start:start + PAGE_SIZE]
 
         return render_template(
             "index.html",
             jobs=jobs,
+            total_count=total_count,
+            page=page,
+            total_pages=total_pages,
             condition_names=condition_names,
             status_choices=STATUS_CHOICES,
             selected_region=region or "",
@@ -219,10 +243,10 @@ def index():
 
 
 def _back_to_index():
-    """상태/메모 변경 후 원래 보고 있던 필터·화면으로 되돌아가기"""
+    """상태/메모/삭제 처리 후 원래 보고 있던 필터·화면·페이지로 되돌아가기"""
     params = {
         key: request.form.get(key, "")
-        for key in ("region", "keyword", "condition_name", "filter_status", "view")
+        for key in ("region", "keyword", "condition_name", "filter_status", "view", "page")
     }
     return redirect(url_for(
         "index",
@@ -231,6 +255,7 @@ def _back_to_index():
         condition_name=params["condition_name"] or None,
         status=params["filter_status"] or None,
         view=params["view"] or "list",
+        page=params["page"] or None,
     ))
 
 
@@ -257,6 +282,24 @@ def set_memo(job_id):
     db = DB()
     db.update_memo(session["user_id"], job_id, memo)
     db.close()
+
+    return _back_to_index()
+
+
+@app.route("/jobs/delete", methods=["POST"])
+@login_required
+def delete_jobs_route():
+    job_ids = [int(v) for v in request.form.getlist("job_ids") if v.isdigit()]
+
+    if not job_ids:
+        flash("삭제할 공고를 선택해주세요.")
+    else:
+        db = DB()
+        try:
+            deleted = db.delete_jobs(session["user_id"], job_ids)
+        finally:
+            db.close()
+        flash(f"{deleted}건의 공고를 삭제했습니다.")
 
     return _back_to_index()
 
@@ -297,7 +340,7 @@ def crawl():
         conditions = _selection_to_conditions(
             cat_names, loc_names, exp_names, edu_names, type_names
         )
-        saved, found = run_web_conditions(conditions)
+        saved, found = run_web_conditions(conditions, session["user_id"])
 
         flash(f"크롤링 완료: 조건 {len(conditions)}개 / 발견 {found}건 / 신규 저장 {saved}건")
         return redirect(url_for("index"))
@@ -412,21 +455,197 @@ def schedule_settings():
     )
 
 
-@app.route("/guide")
+@app.route("/match", methods=["GET", "POST"])
 @login_required
-def guide():
+def job_match():
+    # request.values는 GET 쿼리스트링/POST 폼 양쪽 다 읽어주므로,
+    # 필터 조건 재조회(GET)와 분석 요청 제출(POST) 양쪽에서 같은 필터가 유지된다.
+    region = request.values.get("region", "").strip()
+    keyword = request.values.get("keyword", "").strip()
+    condition_name = request.values.get("condition_name", "").strip()
+    status = request.values.get("status", "").strip()
+
+    result = None
+    error = None
+
     db = DB()
     try:
-        jobs = db.get_interested_jobs(session["user_id"])
+        jobs = db.get_jobs(
+            session["user_id"],
+            region=region or None,
+            keyword=keyword or None,
+            condition_name=condition_name or None,
+            status=status or None,
+        )
+        condition_names = db.get_condition_names(session["user_id"])
+
+        if request.method == "POST":
+            selected_ids = {int(v) for v in request.form.getlist("job_ids") if v.isdigit()}
+            selected_jobs = [j for j in jobs if j["id"] in selected_ids]
+
+            resume_file = request.files.get("resume")
+
+            if not selected_jobs:
+                error = "비교할 채용공고를 1개 이상 선택해주세요."
+            elif not resume_file or not resume_file.filename:
+                error = "이력서 PDF 파일을 선택해주세요."
+            elif not resume_file.filename.lower().endswith(".pdf"):
+                error = "PDF 파일만 업로드할 수 있습니다."
+            else:
+                pdf_bytes = resume_file.read()
+                api_key = decrypt_secret(db.get_api_key_encrypted(session["user_id"]))
+                try:
+                    analysis = analyze_resume_match(pdf_bytes, selected_jobs, api_key)
+                except JobMatchError as e:
+                    error = str(e)
+                else:
+                    jobs_by_id = {j["id"]: j for j in selected_jobs}
+                    matches = []
+                    for m in analysis.get("matches", []):
+                        job = jobs_by_id.get(m.get("job_id"))
+                        if not job:
+                            continue
+                        matches.append({
+                            "job": job,
+                            "match_percent": m.get("match_percent", 0),
+                            "missing_skills": m.get("missing_skills") or [],
+                            "reason": m.get("reason", ""),
+                        })
+                    matches.sort(key=lambda m: m["match_percent"], reverse=True)
+
+                    result = {
+                        "extracted_skills": analysis.get("extracted_skills", []),
+                        "overall_summary": analysis.get("overall_summary", ""),
+                        "matches": matches,
+                    }
+        else:
+            # 처음 들어왔을 때는 필터링된 공고 전체가 기본으로 체크되어 있도록
+            selected_ids = {j["id"] for j in jobs}
     finally:
         db.close()
 
-    data = build_guideline(jobs)
+    return render_template(
+        "match.html",
+        username=session.get("username"),
+        jobs=jobs,
+        condition_names=condition_names,
+        status_choices=STATUS_CHOICES,
+        selected_region=region,
+        selected_keyword=keyword,
+        selected_condition=condition_name,
+        selected_status=status,
+        selected_ids=selected_ids,
+        result=result,
+        error=error,
+    )
+
+
+@app.route("/cover-letter/<int:job_id>", methods=["GET", "POST"])
+@login_required
+def cover_letter_page(job_id):
+    db = DB()
+    try:
+        jobs = db.get_jobs(session["user_id"])
+        job = next((j for j in jobs if j["id"] == job_id), None)
+        if not job:
+            flash("존재하지 않는 공고입니다.")
+            return redirect(url_for("index"))
+
+        api_key = decrypt_secret(db.get_api_key_encrypted(session["user_id"]))
+
+        # DB에 저장해둔 이전 결과를 기본값으로 사용 - 페이지를 나갔다 다시 들어와도
+        # 회사 분석/자소서를 계속 볼 수 있도록 함
+        saved = db.get_cover_letter(session["user_id"], job_id)
+        company_analysis = saved["company_analysis"] if saved else None
+        draft = saved["cover_letter"] if saved else None
+        interaction_id = saved["cover_letter_interaction_id"] if saved else None
+
+        error = None
+
+        if request.method == "POST":
+            # 같은 페이지 내에서 넘어온 hidden 필드 값이 있으면 그걸 우선 사용
+            # (DB 저장 전에 이미 여러 단계를 거쳤을 수 있으므로)
+            company_analysis = request.form.get("company_analysis", company_analysis)
+            draft = request.form.get("draft", draft)
+            interaction_id = request.form.get("interaction_id") or interaction_id
+
+            action = request.form.get("action")
+
+            if action == "analyze":
+                try:
+                    company_analysis, interaction_id = analyze_company(job, api_key)
+                except CoverLetterError as e:
+                    error = str(e)
+                else:
+                    # 새로 분석하면 대화 맥락이 새로 시작되므로, 이전 체인에 이어져 있던
+                    # 자소서 초안은 더 이상 유효하지 않아 함께 비운다
+                    draft = None
+                    db.save_cover_letter(session["user_id"], job_id, company_analysis, draft, interaction_id)
+
+            elif action == "generate":
+                resume_file = request.files.get("resume")
+                if not resume_file or not resume_file.filename:
+                    error = "이력서 PDF 파일을 선택해주세요."
+                elif not resume_file.filename.lower().endswith(".pdf"):
+                    error = "PDF 파일만 업로드할 수 있습니다."
+                else:
+                    pdf_bytes = resume_file.read()
+                    try:
+                        draft, interaction_id = generate_cover_letter(job, pdf_bytes, interaction_id, api_key)
+                    except CoverLetterError as e:
+                        error = str(e)
+                    else:
+                        db.save_cover_letter(session["user_id"], job_id, company_analysis, draft, interaction_id)
+
+            elif action == "revise":
+                feedback = (request.form.get("feedback") or "").strip()
+                try:
+                    draft, interaction_id = revise_cover_letter(feedback, interaction_id, api_key)
+                except CoverLetterError as e:
+                    error = str(e)
+                else:
+                    db.save_cover_letter(session["user_id"], job_id, company_analysis, draft, interaction_id)
+    finally:
+        db.close()
 
     return render_template(
-        "guide.html",
+        "cover_letter.html",
         username=session.get("username"),
-        **data,
+        job=job,
+        company_analysis=company_analysis,
+        draft=draft,
+        interaction_id=interaction_id,
+        error=error,
+    )
+
+
+@app.route("/settings/api-key", methods=["GET", "POST"])
+@login_required
+def api_key_settings():
+    db = DB()
+    try:
+        if request.method == "POST":
+            action = request.form.get("action")
+            if action == "clear":
+                db.set_api_key_encrypted(session["user_id"], None)
+                flash("등록된 API 키를 삭제했습니다.")
+            else:
+                new_key = (request.form.get("api_key") or "").strip()
+                if not new_key:
+                    flash("API 키를 입력해주세요.")
+                else:
+                    db.set_api_key_encrypted(session["user_id"], encrypt_secret(new_key))
+                    flash("API 키를 저장했습니다.")
+            return redirect(url_for("api_key_settings"))
+
+        api_key_enc = db.get_api_key_encrypted(session["user_id"])
+    finally:
+        db.close()
+
+    return render_template(
+        "api_key_settings.html",
+        username=session.get("username"),
+        has_api_key=bool(api_key_enc),
     )
 
 

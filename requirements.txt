@@ -3,4 +3,5 @@ webdriver-manager
 beautifulsoup4
 mysql-connector-python
 flask
-schedule
+cryptography
+google-genai

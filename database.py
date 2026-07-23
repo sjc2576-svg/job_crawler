@@ -13,9 +13,11 @@ class DB:
         self.cursor = self.conn.cursor()
         self.dict_cursor = self.conn.cursor(dictionary=True)
         self._ensure_table()
-        self._ensure_unique_index()
         self._ensure_users_table()
+        self._ensure_job_posting_owner_column()
+        self._ensure_user_api_key_column()
         self._ensure_user_job_state_table()
+        self._ensure_cover_letter_columns()
         self._migrate_legacy_status_to_per_user()
         self._ensure_schedule_table()
 
@@ -34,6 +36,40 @@ class DB:
         """)
         self.conn.commit()
 
+    def _ensure_user_api_key_column(self):
+        """계정별 AI API 키(암호화된 값)를 저장할 컬럼이 없으면 추가.
+        예전에는 Anthropic 전용으로 anthropic_api_key_enc라는 이름을 썼는데,
+        이제 어느 제공자든 담을 수 있는 이름(ai_api_key_enc)으로 바꿨다.
+        기존에 저장해둔 값이 있으면 컬럼명만 바꿔서 그대로 보존한다."""
+        self.cursor.execute("""
+        SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'app_user'
+          AND column_name = 'ai_api_key_enc'
+        """)
+        exists = self.cursor.fetchone()[0]
+
+        if exists:
+            return
+
+        self.cursor.execute("""
+        SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'app_user'
+          AND column_name = 'anthropic_api_key_enc'
+        """)
+        legacy_exists = self.cursor.fetchone()[0]
+
+        if legacy_exists:
+            self.cursor.execute(
+                "ALTER TABLE app_user CHANGE anthropic_api_key_enc ai_api_key_enc VARCHAR(500)"
+            )
+        else:
+            self.cursor.execute(
+                "ALTER TABLE app_user ADD COLUMN ai_api_key_enc VARCHAR(500)"
+            )
+        self.conn.commit()
+
     def _ensure_user_job_state_table(self):
         """지원 현황(상태/메모)을 계정별로 저장하는 테이블"""
         self.cursor.execute("""
@@ -50,6 +86,27 @@ class DB:
         )
         """ % DEFAULT_STATUS)
         self.conn.commit()
+
+    def _ensure_cover_letter_columns(self):
+        """AI 자기소개서 생성(회사 분석/초안/대화 이어가기 ID)을 계정+공고별로
+        저장할 컬럼이 없으면 추가. 웹 화면에서 나중에 다시 봐도 사라지지 않도록
+        user_job_state에 함께 저장한다."""
+        for column, ddl in [
+            ("company_analysis", "ALTER TABLE user_job_state ADD COLUMN company_analysis TEXT"),
+            ("cover_letter", "ALTER TABLE user_job_state ADD COLUMN cover_letter TEXT"),
+            ("cover_letter_interaction_id", "ALTER TABLE user_job_state ADD COLUMN cover_letter_interaction_id VARCHAR(100)"),
+        ]:
+            self.cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = 'user_job_state'
+              AND column_name = %s
+            """, (column,))
+            exists = self.cursor.fetchone()[0]
+
+            if not exists:
+                self.cursor.execute(ddl)
+                self.conn.commit()
 
     def _migrate_legacy_status_to_per_user(self):
         """
@@ -146,58 +203,102 @@ class DB:
                 self.cursor.execute(ddl)
                 self.conn.commit()
 
-    def _ensure_unique_index(self):
-        # link 컬럼에 UNIQUE 인덱스가 없으면 추가 (중복 저장 방지용)
-        # link가 500자라 인덱스는 앞부분만 사용 (255byte)
+    def _ensure_job_posting_owner_column(self):
+        """job_posting을 계정별로 분리하기 위한 user_id 컬럼과, link 단독이 아니라
+        (user_id, link) 조합으로 중복을 체크하는 UNIQUE 인덱스를 보장한다.
+
+        예전엔 job_posting이 모든 계정이 보는 공용 데이터였다. 이미 있던 데이터는
+        가장 먼저 만들어진(가장 오래된) 계정 소유로 전부 이관해서, 그 계정은 기존
+        목록을 그대로 보고 다른 계정들은 빈 목록에서 새로 시작하게 한다."""
+        self.cursor.execute("""
+        SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'job_posting'
+          AND column_name = 'user_id'
+        """)
+        has_user_id = self.cursor.fetchone()[0]
+
+        if not has_user_id:
+            self.cursor.execute("ALTER TABLE job_posting ADD COLUMN user_id INT NULL")
+            self.cursor.execute("""
+                UPDATE job_posting
+                SET user_id = (SELECT id FROM app_user ORDER BY id ASC LIMIT 1)
+                WHERE user_id IS NULL
+            """)
+            self.conn.commit()
+
+        # 예전 link 단독 UNIQUE 인덱스가 남아있으면 제거(계정마다 같은 link를 각자
+        # 가질 수 있어야 하므로 더 이상 link 하나만으로 유일해선 안 됨)
         self.cursor.execute("""
         SELECT COUNT(*) FROM information_schema.statistics
         WHERE table_schema = DATABASE()
           AND table_name = 'job_posting'
           AND index_name = 'uniq_link'
         """)
-        exists = self.cursor.fetchone()[0]
+        if self.cursor.fetchone()[0]:
+            self.cursor.execute("ALTER TABLE job_posting DROP INDEX uniq_link")
+            self.conn.commit()
 
-        if not exists:
+        # (user_id, link) 조합 UNIQUE 인덱스 (link가 500자라 앞 255byte만 사용)
+        self.cursor.execute("""
+        SELECT COUNT(*) FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'job_posting'
+          AND index_name = 'uniq_user_link'
+        """)
+        if not self.cursor.fetchone()[0]:
             try:
                 self.cursor.execute("""
                 ALTER TABLE job_posting
-                ADD UNIQUE INDEX uniq_link (link(255))
+                ADD UNIQUE INDEX uniq_user_link (user_id, link(255))
                 """)
                 self.conn.commit()
             except mysql.connector.Error as e:
                 # 이미 중복 데이터가 있어 인덱스 생성이 실패할 수 있음
-                print(f"UNIQUE 인덱스 생성 실패 (기존 중복 데이터 존재 가능): {e}")
+                print(f"UNIQUE 인덱스(uniq_user_link) 생성 실패: {e}")
 
     # ------------------------------------------------------------
     # 삭제
     # ------------------------------------------------------------
-    def count_jobs(self):
-        """저장된 채용공고 총 개수"""
-        self.cursor.execute("SELECT COUNT(*) FROM job_posting")
-        return self.cursor.fetchone()[0]
+    def delete_jobs(self, user_id, job_ids):
+        """이 계정 소유의 공고 중 선택한 것들을 한 번에 삭제(웹 화면의 정리 기능용).
+        user_id 조건을 함께 걸어서, 요청을 조작해도 다른 계정 소유 공고는 지울 수 없다.
+        딸린 계정별 상태/메모/자소서(user_job_state)도 함께 지워야 FK 제약에 걸리지 않는다.
+        반환값: 실제로 삭제된 job_posting 행 수."""
+        if not job_ids:
+            return 0
 
-    def clear_jobs(self):
-        """저장된 채용공고를 모두 삭제 (새 검색 시작 전 초기화용)"""
-        self.cursor.execute("DELETE FROM job_posting")
+        placeholders = ", ".join(["%s"] * len(job_ids))
+
+        self.cursor.execute(
+            f"DELETE FROM user_job_state WHERE job_id IN ({placeholders})",
+            tuple(job_ids),
+        )
+        self.cursor.execute(
+            f"DELETE FROM job_posting WHERE user_id = %s AND id IN ({placeholders})",
+            (user_id, *job_ids),
+        )
+        deleted = self.cursor.rowcount
         self.conn.commit()
+        return deleted
 
     # ------------------------------------------------------------
     # 저장
     # ------------------------------------------------------------
-    def insert_job(self, title, company, location, link, condition_name=None,
+    def insert_job(self, user_id, title, company, location, link, condition_name=None,
                    career=None, education=None):
         """
-        link가 이미 존재하면 저장을 건너뜁니다 (중복 방지).
+        이 계정이 이미 저장해둔 link면 건너뜁니다 (계정별 중복 방지).
         반환값: 새로 저장됐으면 True, 이미 있어서 건너뛰었으면 False
         """
         sql = """
         INSERT IGNORE INTO job_posting
-        (title, company, location, link, condition_name, career, education)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        (user_id, title, company, location, link, condition_name, career, education)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
         self.cursor.execute(
             sql,
-            (title, company, location, link, condition_name, career, education),
+            (user_id, title, company, location, link, condition_name, career, education),
         )
         self.conn.commit()
 
@@ -223,12 +324,13 @@ class DB:
                jp.career, jp.education,
                COALESCE(ujs.status, %s) AS status,
                ujs.memo AS memo,
-               ujs.applied_at AS applied_at
+               ujs.applied_at AS applied_at,
+               (ujs.cover_letter IS NOT NULL) AS has_cover_letter
         FROM job_posting jp
         LEFT JOIN user_job_state ujs ON ujs.job_id = jp.id AND ujs.user_id = %s
-        WHERE 1=1
+        WHERE jp.user_id = %s
         """
-        params = [DEFAULT_STATUS, user_id]
+        params = [DEFAULT_STATUS, user_id, user_id]
 
         if region:
             sql += " AND jp.location LIKE %s"
@@ -288,26 +390,41 @@ class DB:
         """, (user_id, job_id, memo))
         self.conn.commit()
 
-    def get_interested_jobs(self, user_id):
-        """이 계정이 '관심있음'으로 표시한 공고 전체 (자기소개서 방향성 가이드용)"""
+    # ------------------------------------------------------------
+    # AI 자기소개서 생성 (회사 분석 / 초안 / 대화 이어가기 ID) - 계정+공고별 저장
+    # ------------------------------------------------------------
+    def get_cover_letter(self, user_id, job_id):
+        """이 계정이 이 공고에 대해 생성해둔 회사 분석/자소서를 반환. 없으면 None."""
         self.dict_cursor.execute("""
-        SELECT jp.id, jp.title, jp.company, jp.location, jp.condition_name,
-               jp.career, jp.education, ujs.memo AS memo
-        FROM job_posting jp
-        JOIN user_job_state ujs ON ujs.job_id = jp.id AND ujs.user_id = %s
-        WHERE ujs.status = '관심있음'
-        ORDER BY jp.id DESC
-        """, (user_id,))
-        return self.dict_cursor.fetchall()
+            SELECT company_analysis, cover_letter, cover_letter_interaction_id
+            FROM user_job_state
+            WHERE user_id = %s AND job_id = %s
+        """, (user_id, job_id))
+        row = self.dict_cursor.fetchone()
+        if not row or (row["company_analysis"] is None and row["cover_letter"] is None):
+            return None
+        return row
 
-    def get_condition_names(self):
-        """Flask 필터 드롭다운에 쓸 조건 목록"""
+    def save_cover_letter(self, user_id, job_id, company_analysis, cover_letter, interaction_id):
+        self.cursor.execute("""
+            INSERT INTO user_job_state
+                (user_id, job_id, company_analysis, cover_letter, cover_letter_interaction_id)
+            VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                company_analysis = VALUES(company_analysis),
+                cover_letter = VALUES(cover_letter),
+                cover_letter_interaction_id = VALUES(cover_letter_interaction_id)
+        """, (user_id, job_id, company_analysis, cover_letter, interaction_id))
+        self.conn.commit()
+
+    def get_condition_names(self, user_id):
+        """Flask 필터 드롭다운에 쓸 조건 목록 (이 계정이 수집한 공고 기준)"""
         self.cursor.execute("""
         SELECT DISTINCT condition_name
         FROM job_posting
-        WHERE condition_name IS NOT NULL
+        WHERE user_id = %s AND condition_name IS NOT NULL
         ORDER BY condition_name
-        """)
+        """, (user_id,))
         return [row[0] for row in self.cursor.fetchall()]
 
     # ------------------------------------------------------------
@@ -338,6 +455,22 @@ class DB:
             (user_id,),
         )
         return self.dict_cursor.fetchone()
+
+    def get_api_key_encrypted(self, user_id):
+        """이 계정에 등록된 AI API 키(암호화된 상태)를 반환. 없으면 None."""
+        self.cursor.execute(
+            "SELECT ai_api_key_enc FROM app_user WHERE id = %s", (user_id,)
+        )
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
+    def set_api_key_encrypted(self, user_id, encrypted_key_or_none):
+        """이 계정의 AI API 키를 저장(또는 None으로 삭제)."""
+        self.cursor.execute(
+            "UPDATE app_user SET ai_api_key_enc = %s WHERE id = %s",
+            (encrypted_key_or_none, user_id),
+        )
+        self.conn.commit()
 
     # ------------------------------------------------------------
     # 자동 크롤링 스케줄 (사용자별)

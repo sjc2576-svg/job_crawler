@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+
+<title>API 키 설정</title>
+
+<style>
+
+body {
+    font-family: sans-serif;
+    margin: 30px;
+    max-width: 700px;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.navbar .nav-links {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.navbar .user {
+    color: #666;
+}
+
+.navbar form {
+    display: inline;
+}
+
+h2 {
+    margin-bottom: 6px;
+}
+
+.hint {
+    color: #666;
+    margin-bottom: 20px;
+}
+
+.status {
+    margin-bottom: 20px;
+    padding: 10px 14px;
+    border-radius: 4px;
+}
+
+.status.on {
+    color: #060;
+    background: #eafaf0;
+    border: 1px solid #b6e6c9;
+}
+
+.status.off {
+    color: #666;
+    background: #f7f7f7;
+    border: 1px solid #ddd;
+}
+
+.flash {
+    color: #060;
+    background: #eafaf0;
+    border: 1px solid #b6e6c9;
+    padding: 10px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+}
+
+.field {
+    margin-bottom: 16px;
+}
+
+.field label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+.field input[type="password"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+}
+
+button {
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+button.danger {
+    background: #fdf1f1;
+    border: 1px solid #f0c9c9;
+    color: #a33;
+}
+
+.back-link {
+    margin-top: 16px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="navbar">
+    <div class="nav-links">
+        <a href="{{ url_for('crawl') }}">크롤링 실행</a>
+        <a href="{{ url_for('schedule_settings') }}">자동 크롤링 설정</a>
+        <a href="{{ url_for('job_match') }}">AI 직무 매칭</a>
+    </div>
+    <div class="user">
+        {{ username }}님
+        <form method="post" action="{{ url_for('logout') }}">
+            <button type="submit">로그아웃</button>
+        </form>
+    </div>
+</div>
+
+<h2>API 키 설정</h2>
+<p class="hint">
+    "AI 직무 매칭"은 각자 발급받은 Google AI Studio(Gemini) API 키로
+    동작합니다(현재 테스트 단계라 무료 API를 사용 중입니다).
+    키는 이 서버에 암호화되어 저장되며, 본인 계정의 분석 요청에만 사용됩니다.
+    아직 키가 없다면 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>
+    에서 구글 계정으로 무료로 발급받을 수 있습니다.
+</p>
+
+{% with messages = get_flashed_messages() %}
+    {% if messages %}
+        {% for message in messages %}
+        <p class="flash">{{ message }}</p>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
+
+{% if has_api_key %}
+<p class="status on">현재 API 키가 등록되어 있습니다. 새 키를 입력하면 기존 키를 덮어씁니다.</p>
+{% else %}
+<p class="status off">아직 등록된 API 키가 없습니다.</p>
+{% endif %}
+
+<form method="post" action="{{ url_for('api_key_settings') }}">
+    <div class="field">
+        <label for="api_key">Google AI Studio API 키</label>
+        <input type="password" id="api_key" name="api_key" placeholder="AIzaSy..." autocomplete="off">
+    </div>
+    <div class="actions">
+        <button type="submit" name="action" value="save">저장</button>
+        {% if has_api_key %}
+        <button type="submit" name="action" value="clear" class="danger">키 삭제</button>
+        {% endif %}
+    </div>
+</form>
+
+<p class="back-link"><a href="{{ url_for('index') }}">채용공고 목록으로 돌아가기</a></p>
+
+</body>
+
+</html>

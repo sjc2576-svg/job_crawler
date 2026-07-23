@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="utf-8">
+
+<title>AI 자기소개서 생성</title>
+
+<style>
+
+body {
+    font-family: sans-serif;
+    margin: 30px;
+    max-width: 800px;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+.navbar .nav-links {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.navbar .user {
+    color: #666;
+}
+
+.navbar form {
+    display: inline;
+}
+
+h2 {
+    margin-bottom: 6px;
+}
+
+.job-info {
+    background: #f7f7f7;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+}
+
+.job-info .title {
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.job-info .meta {
+    color: #666;
+    font-size: 0.9em;
+}
+
+.hint {
+    color: #666;
+    margin-bottom: 16px;
+}
+
+.error {
+    color: #a33;
+    background: #fdf1f1;
+    border: 1px solid #f0c9c9;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+}
+
+.step {
+    margin-bottom: 28px;
+}
+
+.step h3 {
+    margin-bottom: 10px;
+    border-bottom: 2px solid #333;
+    display: inline-block;
+    padding-bottom: 2px;
+}
+
+.result-box {
+    background: #fbf9ff;
+    border: 1px solid #ddd0f7;
+    border-radius: 6px;
+    padding: 16px;
+    white-space: pre-wrap;
+    line-height: 1.6;
+    margin-bottom: 12px;
+}
+
+textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-family: inherit;
+    resize: vertical;
+}
+
+.action-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+button {
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+.back-link {
+    margin-top: 16px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="navbar">
+    <div class="nav-links">
+        <a href="{{ url_for('crawl') }}">크롤링 실행</a>
+        <a href="{{ url_for('schedule_settings') }}">자동 크롤링 설정</a>
+        <a href="{{ url_for('job_match') }}">AI 직무 매칭</a>
+        <a href="{{ url_for('api_key_settings') }}">API 키 설정</a>
+    </div>
+    <div class="user">
+        {{ username }}님
+        <form method="post" action="{{ url_for('logout') }}">
+            <button type="submit">로그아웃</button>
+        </form>
+    </div>
+</div>
+
+<h2>AI 자기소개서 생성</h2>
+<p class="hint">
+    공고 선택 → 회사 분석(웹 검색) → 자소서 자동 생성 → 직무 맞춤 수정 순서로 진행합니다.
+    <a href="{{ url_for('api_key_settings') }}">API 키 설정</a>에 등록해둔 본인의
+    Google AI Studio API 키로 요청이 전송되며, 회사 분석 단계는 웹 검색을 사용해서
+    무료 한도를 더 빨리 소모할 수 있습니다.
+</p>
+
+<div class="job-info">
+    <div class="title">{{ job.title }}</div>
+    <div class="meta">
+        {{ job.company }} · {{ job.location }} · {{ job.career or "경력 무관" }} · {{ job.education or "학력 무관" }}
+        · <a href="{{ job.link }}" target="_blank" rel="noopener">공고 바로가기</a>
+    </div>
+</div>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<div class="step">
+    <h3>1. 회사 분석</h3>
+    {% if company_analysis %}
+    <div class="result-box">{{ company_analysis }}</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('cover_letter_page', job_id=job.id) }}">
+        <input type="hidden" name="action" value="analyze">
+        <button type="submit">{{ "다시 분석하기" if company_analysis else "회사 분석 시작하기" }}</button>
+    </form>
+</div>
+
+{% if company_analysis %}
+<div class="step">
+    <h3>2. 자소서 자동 생성</h3>
+    {% if draft %}
+    <div class="result-box">{{ draft }}</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('cover_letter_page', job_id=job.id) }}" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="generate">
+        <input type="hidden" name="company_analysis" value="{{ company_analysis }}">
+        <input type="hidden" name="interaction_id" value="{{ interaction_id }}">
+        <div class="action-row">
+            <input type="file" name="resume" accept="application/pdf">
+            <button type="submit">{{ "다시 생성하기" if draft else "자소서 생성하기" }}</button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+{% if draft %}
+<div class="step">
+    <h3>3. 직무 맞춤 수정</h3>
+    <form method="post" action="{{ url_for('cover_letter_page', job_id=job.id) }}">
+        <input type="hidden" name="action" value="revise">
+        <input type="hidden" name="company_analysis" value="{{ company_analysis }}">
+        <input type="hidden" name="draft" value="{{ draft }}">
+        <input type="hidden" name="interaction_id" value="{{ interaction_id }}">
+        <textarea name="feedback" rows="3" placeholder="예: 지원동기 부분을 더 구체적으로 써줘 / 두 번째 문단을 짧게 줄여줘"></textarea>
+        <div class="action-row">
+            <button type="submit">수정 요청하기</button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+<p class="back-link"><a href="{{ url_for('index') }}">채용공고 목록으로 돌아가기</a></p>
+
+</body>
+
+</html>
