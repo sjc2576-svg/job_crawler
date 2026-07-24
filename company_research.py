@@ -48,11 +48,32 @@ def parse_sections(text):
     return sections
 
 
+def _raise_for_error(e, error_cls):
+    # client.interactions.create()의 예외 타입들은 google.genai._gaos.lib.compat_errors의
+    # 비공개(내부) 모듈에 있어 클래스를 직접 import하지 않고, 공통으로 노출되는
+    # status_code/message 속성만 덕타이핑으로 읽어 분류한다.
+    status = getattr(e, "status_code", None)
+    detail = getattr(e, "message", None) or str(e)
+    if status in (401, 403) or "API_KEY_INVALID" in detail or "API key not valid" in detail:
+        raise error_cls("Google AI Studio API 키가 유효하지 않습니다. 'API 키 설정'에서 키를 확인해주세요.")
+    if status == 429:
+        raise error_cls("무료 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
+    if status and status >= 500:
+        raise error_cls(f"Gemini 서버 오류가 발생했습니다 ({status}). 잠시 후 다시 시도해주세요.")
+    if status:
+        raise error_cls(f"요청이 거부되었습니다 ({status}): {detail}")
+    raise error_cls(f"AI 호출 중 오류가 발생했습니다: {detail}")
+
+
 def analyze_company_research(company, api_key):
     """company: 조사할 회사명(문자열).
     api_key: 사용자 본인의 Google AI Studio API 키(평문, 복호화된 값).
 
-    성공 시 (raw_text, sections_dict, interaction_id)를 반환한다.
+    웹 검색(google_search) 도구는 순수 생성보다 훨씬 빡빡한 무료 쿼터가 걸려있어서,
+    검색 포함 요청이 429로 막히면 검색 없이 한 번 더 시도해 완전히 실패하는 대신
+    "검색 없이 생성된" 결과라도 보여준다.
+
+    성공 시 (raw_text, sections_dict, interaction_id, 검색이 실제로 사용됐는지 여부)를 반환한다.
     sections_dict는 SECTION_ORDER에 있는 항목만 골라 담되, 파싱에 실패하면 빈 dict.
     실패 시 CompanyResearchError(사용자에게 보여줄 한글 메시지)를 발생시킨다."""
 
@@ -68,30 +89,29 @@ def analyze_company_research(company, api_key):
 
     client = genai.Client(api_key=api_key)
 
-    try:
-        interaction = client.interactions.create(
+    def _call(use_search):
+        kwargs = dict(
             model=MODEL,
             system_instruction=_SYSTEM_PROMPT,
             input=f"조사할 회사: {company}",
-            tools=[{"type": "google_search"}],
             store=True,
             generation_config={"max_output_tokens": 4096},
         )
+        if use_search:
+            kwargs["tools"] = [{"type": "google_search"}]
+        return client.interactions.create(**kwargs)
+
+    used_search = True
+    try:
+        interaction = _call(use_search=True)
     except Exception as e:
-        # client.interactions.create()의 예외 타입들은 google.genai._gaos.lib.compat_errors의
-        # 비공개(내부) 모듈에 있어 클래스를 직접 import하지 않고, 공통으로 노출되는
-        # status_code/message 속성만 덕타이핑으로 읽어 분류한다.
-        status = getattr(e, "status_code", None)
-        detail = getattr(e, "message", None) or str(e)
-        if status in (401, 403) or "API_KEY_INVALID" in detail or "API key not valid" in detail:
-            raise CompanyResearchError("Google AI Studio API 키가 유효하지 않습니다. 'API 키 설정'에서 키를 확인해주세요.")
-        if status == 429:
-            raise CompanyResearchError("무료 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.")
-        if status and status >= 500:
-            raise CompanyResearchError(f"Gemini 서버 오류가 발생했습니다 ({status}). 잠시 후 다시 시도해주세요.")
-        if status:
-            raise CompanyResearchError(f"요청이 거부되었습니다 ({status}): {detail}")
-        raise CompanyResearchError(f"AI 호출 중 오류가 발생했습니다: {detail}")
+        if getattr(e, "status_code", None) != 429:
+            _raise_for_error(e, CompanyResearchError)
+        try:
+            interaction = _call(use_search=False)
+            used_search = False
+        except Exception as e2:
+            _raise_for_error(e2, CompanyResearchError)
 
     if interaction.status != "completed":
         raise CompanyResearchError(f"AI가 분석을 완료하지 못했습니다 (상태: {interaction.status}). 다시 시도해주세요.")
@@ -103,4 +123,4 @@ def analyze_company_research(company, api_key):
     parsed = parse_sections(text)
     sections = {title: parsed[title] for title in SECTION_ORDER if title in parsed}
 
-    return text, sections, interaction.id
+    return text, sections, interaction.id, used_search

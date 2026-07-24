@@ -74,6 +74,15 @@ h2 {
     margin-bottom: 16px;
 }
 
+.warning {
+    color: #8a6300;
+    background: #fff8e1;
+    border: 1px solid #f0dfa0;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+}
+
 .step {
     margin-bottom: 28px;
 }
@@ -131,6 +140,7 @@ button {
         <a href="{{ url_for('schedule_settings') }}">자동 크롤링 설정</a>
         <a href="{{ url_for('job_match') }}">AI 직무 매칭</a>
         <a href="{{ url_for('company_analysis_page') }}">기업 분석</a>
+        <a href="{{ url_for('cover_letter_review_page') }}">자소서 첨삭</a>
         <a href="{{ url_for('api_key_settings') }}">API 키 설정</a>
     </div>
     <div class="user">
@@ -159,6 +169,10 @@ button {
 
 {% if error %}
 <p class="error">{{ error }}</p>
+{% endif %}
+
+{% if warning %}
+<p class="warning">{{ warning }}</p>
 {% endif %}
 
 <div class="step">

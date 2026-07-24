@@ -80,11 +80,27 @@ _REVISE_SYSTEM = (
     "이력서에 없는 경험을 새로 지어내지 말고, 이전과 마찬가지로 부족한 부분은 빈칸으로 남겨."
 )
 
+_REVIEW_SYSTEM = (
+    "너는 자기소개서를 첨삭하는 커리어 코치야. 특정 회사나 공고와는 무관하게, 사용자가 작성한 "
+    "자기소개서 원문 자체의 완성도만 놓고 첨삭 리뷰를 해줘. 새 자기소개서를 대신 작성해주지 말고 "
+    "원문을 존중하면서 다음을 정리해: "
+    "1) 총평(강점과 약점을 3~5문장으로), "
+    "2) 문단/문장 단위 구체적 개선 제안(어색한 표현, 상투적이고 두루뭉술한 표현, 근거 없는 주장, "
+    "논리적으로 매끄럽지 않은 흐름을 콕 집어서), "
+    "3) 자기소개서에 흔히 담기는 항목(성장과정, 성격의 장단점, 지원동기, 입사 후 포부 등) 중 "
+    "빠져 있거나 부실하게 다뤄진 부분이 있으면 지적. "
+    "원문에 없는 경험을 지어내서 채우라고 하지 말고 '~을 구체적인 사례로 추가하면 좋겠다' 정도로 "
+    "방향만 제시해. 마크다운 헤더나 불릿기호 없이 번호와 자연스러운 문단으로 작성해."
+)
+
 
 def analyze_company(job, api_key):
     """1단계: 공고 정보를 바탕으로 회사를 웹 검색해서 분석.
     job: database.get_jobs()가 반환하는 dict 하나 (title, company, location, link 포함).
-    반환값: (분석 텍스트, interaction_id)"""
+    웹 검색(google_search) 도구는 순수 생성보다 훨씬 빡빡한 무료 쿼터가 걸려있어서,
+    검색 포함 요청이 429로 막히면 검색 없이 한 번 더 시도해 완전히 실패하는 대신
+    "검색 없이 생성된" 결과라도 보여준다.
+    반환값: (분석 텍스트, interaction_id, 검색이 실제로 사용됐는지 여부)"""
     _require_api_key(api_key)
 
     client = genai.Client(api_key=api_key)
@@ -96,19 +112,32 @@ def analyze_company(job, api_key):
         "위 회사를 웹 검색으로 조사해서 자기소개서에 활용할 수 있도록 정리해줘."
     )
 
-    try:
-        interaction = client.interactions.create(
+    def _call(use_search):
+        kwargs = dict(
             model=MODEL,
             system_instruction=_COMPANY_ANALYSIS_SYSTEM,
             input=prompt,
-            tools=[{"type": "google_search"}],
             store=True,
             generation_config={"max_output_tokens": 2048},
         )
-    except Exception as e:
-        _handle_error(e)
+        if use_search:
+            kwargs["tools"] = [{"type": "google_search"}]
+        return client.interactions.create(**kwargs)
 
-    return _finish(interaction)
+    used_search = True
+    try:
+        interaction = _call(use_search=True)
+    except Exception as e:
+        if getattr(e, "status_code", None) != 429:
+            _handle_error(e)
+        try:
+            interaction = _call(use_search=False)
+            used_search = False
+        except Exception as e2:
+            _handle_error(e2)
+
+    text, interaction_id = _finish(interaction)
+    return text, interaction_id, used_search
 
 
 def generate_cover_letter(job, pdf_bytes, previous_interaction_id, api_key):
@@ -171,3 +200,35 @@ def revise_cover_letter(feedback, previous_interaction_id, api_key):
         _handle_error(e)
 
     return _finish(interaction)
+
+
+def review_cover_letter(api_key, text=None, pdf_bytes=None):
+    """사용자가 직접 작성해 온 자기소개서(텍스트 또는 PDF)를 회사/공고와 무관하게 첨삭 리뷰한다.
+    다른 단계와 이어지는 대화가 아니라 단발성 호출이므로 interaction_id는 반환하지 않는다.
+    반환값: 리뷰 텍스트"""
+    _require_api_key(api_key)
+    if not text and not pdf_bytes:
+        raise CoverLetterError("리뷰할 자기소개서 텍스트를 입력하거나 PDF 파일을 업로드해주세요.")
+
+    client = genai.Client(api_key=api_key)
+
+    if pdf_bytes:
+        input_payload = [
+            {"type": "document", "data": io.BytesIO(pdf_bytes), "mime_type": "application/pdf"},
+            {"type": "text", "text": "첨부한 PDF가 사용자가 작성한 자기소개서 원문이야. 첨삭 리뷰를 해줘."},
+        ]
+    else:
+        input_payload = f"아래는 사용자가 작성한 자기소개서 원문이야. 첨삭 리뷰를 해줘.\n\n{text}"
+
+    try:
+        interaction = client.interactions.create(
+            model=MODEL,
+            system_instruction=_REVIEW_SYSTEM,
+            input=input_payload,
+            generation_config={"max_output_tokens": 4096},
+        )
+    except Exception as e:
+        _handle_error(e)
+
+    review_text, _ = _finish(interaction)
+    return review_text

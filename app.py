@@ -14,7 +14,10 @@ from database import DB, STATUS_CHOICES
 from config import SECRET_KEY, JOB_CATEGORY, LOCATION, EXPERIENCE, EDUCATION, JOB_TYPE
 from crawler import build_conditions, run_web_conditions
 from job_matching import analyze_resume_match, JobMatchError
-from cover_letter import analyze_company, generate_cover_letter, revise_cover_letter, CoverLetterError
+from cover_letter import (
+    analyze_company, generate_cover_letter, revise_cover_letter,
+    review_cover_letter, CoverLetterError,
+)
 from company_research import analyze_company_research, parse_sections, SECTION_ORDER, CompanyResearchError
 from crypto_utils import encrypt_secret, decrypt_secret
 
@@ -562,6 +565,7 @@ def cover_letter_page(job_id):
         interaction_id = saved["cover_letter_interaction_id"] if saved else None
 
         error = None
+        warning = None
 
         if request.method == "POST":
             # 같은 페이지 내에서 넘어온 hidden 필드 값이 있으면 그걸 우선 사용
@@ -574,10 +578,12 @@ def cover_letter_page(job_id):
 
             if action == "analyze":
                 try:
-                    company_analysis, interaction_id = analyze_company(job, api_key)
+                    company_analysis, interaction_id, used_search = analyze_company(job, api_key)
                 except CoverLetterError as e:
                     error = str(e)
                 else:
+                    if not used_search:
+                        warning = "웹 검색 무료 한도 초과로 검색 없이 생성된 분석입니다. 최신 뉴스/실적 등은 부정확할 수 있어요."
                     # 새로 분석하면 대화 맥락이 새로 시작되므로, 이전 체인에 이어져 있던
                     # 자소서 초안은 더 이상 유효하지 않아 함께 비운다
                     draft = None
@@ -617,6 +623,47 @@ def cover_letter_page(job_id):
         draft=draft,
         interaction_id=interaction_id,
         error=error,
+        warning=warning,
+    )
+
+
+@app.route("/cover-letter-review", methods=["GET", "POST"])
+@login_required
+def cover_letter_review_page():
+    # 회사/공고와 무관하게 자기소개서 원문 자체를 첨삭하는 단발성 기능이라
+    # job_match처럼 DB에 저장하지 않고 요청마다 새로 처리한다.
+    review = None
+    error = None
+    draft_text = ""
+
+    if request.method == "POST":
+        draft_text = (request.form.get("draft_text") or "").strip()
+        draft_file = request.files.get("draft_pdf")
+        pdf_bytes = None
+        if draft_file and draft_file.filename:
+            if not draft_file.filename.lower().endswith(".pdf"):
+                error = "PDF 파일만 업로드할 수 있습니다."
+            else:
+                pdf_bytes = draft_file.read()
+
+        if not error:
+            db = DB()
+            try:
+                api_key = decrypt_secret(db.get_api_key_encrypted(session["user_id"]))
+            finally:
+                db.close()
+
+            try:
+                review = review_cover_letter(api_key, text=draft_text or None, pdf_bytes=pdf_bytes)
+            except CoverLetterError as e:
+                error = str(e)
+
+    return render_template(
+        "cover_letter_review.html",
+        username=session.get("username"),
+        review=review,
+        draft_text=draft_text,
+        error=error,
     )
 
 
@@ -626,6 +673,7 @@ def company_analysis_page():
     company = request.values.get("company", "").strip()
 
     error = None
+    warning = None
     analysis_text = None
     sections = {}
     updated_at = None
@@ -640,10 +688,12 @@ def company_analysis_page():
             else:
                 api_key = decrypt_secret(db.get_api_key_encrypted(session["user_id"]))
                 try:
-                    analysis_text, sections, interaction_id = analyze_company_research(company, api_key)
+                    analysis_text, sections, interaction_id, used_search = analyze_company_research(company, api_key)
                 except CompanyResearchError as e:
                     error = str(e)
                 else:
+                    if not used_search:
+                        warning = "웹 검색 무료 한도 초과로 검색 없이 생성된 분석입니다. 최신 뉴스/매출 등은 부정확할 수 있어요."
                     db.save_company_analysis(session["user_id"], company, analysis_text, interaction_id)
 
         if not error and company and analysis_text is None:
@@ -665,6 +715,7 @@ def company_analysis_page():
         section_order=SECTION_ORDER,
         updated_at=updated_at,
         error=error,
+        warning=warning,
     )
 
 
