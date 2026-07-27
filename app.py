@@ -1,6 +1,3 @@
-import threading
-import time
-from datetime import datetime
 from functools import wraps
 
 import mysql.connector
@@ -11,8 +8,8 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from database import DB, STATUS_CHOICES
-from config import SECRET_KEY, JOB_CATEGORY, LOCATION, EXPERIENCE, EDUCATION, JOB_TYPE
-from crawler import build_conditions, run_web_conditions
+from settings import SECRET_KEY
+from config import JOB_CATEGORY, LOCATION, EXPERIENCE, EDUCATION, JOB_TYPE
 from job_matching import analyze_resume_match, JobMatchError
 from cover_letter import (
     analyze_company, generate_cover_letter, revise_cover_letter,
@@ -27,63 +24,6 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 이력서 업로드 용량
 # debug=False로 실행 중이라 기본값이면 템플릿을 최초 1회만 읽고 메모리에 캐싱한다.
 # 그러면 templates/*.html을 고쳐도 서버를 재시작하기 전까지는 화면에 반영되지 않는다.
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-
-
-def _selection_to_conditions(cat_names, loc_names, exp_names, edu_names, type_names):
-    """체크된 이름 리스트들(직무/지역/경력/학력/근무형태)을 condition dict 리스트로 변환.
-    직무 외에는 비어있으면 각각 전국/전체로 기본값 처리."""
-    loc_names = loc_names or [next(iter(LOCATION))]
-    exp_names = exp_names or [next(iter(EXPERIENCE))]
-    edu_names = edu_names or [next(iter(EDUCATION))]
-    type_names = type_names or [next(iter(JOB_TYPE))]
-
-    cat_sel = [(name, JOB_CATEGORY[name]) for name in cat_names if name in JOB_CATEGORY]
-    loc_sel = [(name, LOCATION[name]) for name in loc_names if name in LOCATION]
-    exp_sel = [(name, EXPERIENCE[name]) for name in exp_names if name in EXPERIENCE]
-    edu_sel = [(name, EDUCATION[name]) for name in edu_names if name in EDUCATION]
-    type_sel = [(name, JOB_TYPE[name]) for name in type_names if name in JOB_TYPE]
-
-    return build_conditions(cat_sel, loc_sel, exp_sel, edu_sel, type_sel)
-
-
-def _run_due_schedules():
-    now = datetime.now()
-    current_time = now.strftime("%H:%M")
-    today = now.date()
-
-    db = DB()
-    try:
-        due = db.get_due_schedules(current_time, today)
-    finally:
-        db.close()
-
-    for sched in due:
-        cat_names = [n for n in (sched["job_categories"] or "").split(",") if n]
-        loc_names = [n for n in (sched["locations"] or "").split(",") if n]
-        exp_names = [n for n in (sched["experiences"] or "").split(",") if n]
-        edu_names = [n for n in (sched["educations"] or "").split(",") if n]
-        type_names = [n for n in (sched["job_types"] or "").split(",") if n]
-
-        if cat_names:
-            conditions = _selection_to_conditions(
-                cat_names, loc_names, exp_names, edu_names, type_names
-            )
-            run_web_conditions(conditions, sched["user_id"])
-
-        db = DB()
-        try:
-            db.mark_schedule_run(sched["user_id"], today)
-        finally:
-            db.close()
-
-
-def _scheduler_background_loop():
-    while True:
-        try:
-            _run_due_schedules()
-        except Exception:
-            pass
-        time.sleep(60)
 
 
 def login_required(view):
@@ -312,49 +252,59 @@ def delete_jobs_route():
 @login_required
 def crawl():
     db = DB()
-    user = db.get_user_by_id(session["user_id"])
-    db.close()
+    try:
+        user = db.get_user_by_id(session["user_id"])
 
-    default_job_categories = (user["job_categories"].split(",") if user and user["job_categories"] else [])
+        default_job_categories = (user["job_categories"].split(",") if user and user["job_categories"] else [])
 
-    form_context = dict(
-        job_categories=JOB_CATEGORY,
-        locations=LOCATION,
-        experiences=EXPERIENCE,
-        educations=EDUCATION,
-        job_types=JOB_TYPE,
-        username=session.get("username"),
-    )
+        form_context = dict(
+            job_categories=JOB_CATEGORY,
+            locations=LOCATION,
+            experiences=EXPERIENCE,
+            educations=EDUCATION,
+            job_types=JOB_TYPE,
+            username=session.get("username"),
+        )
 
-    if request.method == "POST":
-        cat_names = request.form.getlist("job_category")
-        loc_names = request.form.getlist("location")
-        exp_names = request.form.getlist("experience")
-        edu_names = request.form.getlist("education")
-        type_names = request.form.getlist("job_type")
+        if request.method == "POST":
+            cat_names = request.form.getlist("job_category")
+            loc_names = request.form.getlist("location")
+            exp_names = request.form.getlist("experience")
+            edu_names = request.form.getlist("education")
+            type_names = request.form.getlist("job_type")
 
-        if not cat_names:
-            return render_template(
-                "crawl.html",
-                **form_context,
-                error="직무를 하나 이상 선택해주세요.",
-                selected_job_categories=default_job_categories,
+            if not cat_names:
+                return render_template(
+                    "crawl.html",
+                    **form_context,
+                    error="직무를 하나 이상 선택해주세요.",
+                    selected_job_categories=default_job_categories,
+                    recent_requests=db.get_recent_crawl_requests(session["user_id"]),
+                )
+
+            # Selenium 크롤링은 이 서버(Vercel 서버리스)가 아니라 GitHub Actions 워커가
+            # 대기열을 폴링하며 처리한다 (worker.py). 여기서는 요청만 접수한다.
+            db.create_crawl_request(
+                session["user_id"],
+                ",".join(cat_names),
+                ",".join(loc_names),
+                ",".join(exp_names),
+                ",".join(edu_names),
+                ",".join(type_names),
             )
 
-        conditions = _selection_to_conditions(
-            cat_names, loc_names, exp_names, edu_names, type_names
+            flash("크롤링 요청이 접수되었습니다. 잠시 후 아래 목록에서 결과를 확인해주세요.")
+            return redirect(url_for("crawl"))
+
+        return render_template(
+            "crawl.html",
+            **form_context,
+            error=None,
+            selected_job_categories=default_job_categories,
+            recent_requests=db.get_recent_crawl_requests(session["user_id"]),
         )
-        saved, found = run_web_conditions(conditions, session["user_id"])
-
-        flash(f"크롤링 완료: 조건 {len(conditions)}개 / 발견 {found}건 / 신규 저장 {saved}건")
-        return redirect(url_for("index"))
-
-    return render_template(
-        "crawl.html",
-        **form_context,
-        error=None,
-        selected_job_categories=default_job_categories,
-    )
+    finally:
+        db.close()
 
 
 @app.route("/schedule", methods=["GET", "POST"])
@@ -750,9 +700,8 @@ def api_key_settings():
 
 
 if __name__ == "__main__":
-
-    threading.Thread(target=_scheduler_background_loop, daemon=True).start()
-
+    # 크롤링 예약 실행은 이제 worker.py(GitHub Actions)가 담당하므로
+    # 여기서는 로컬 개발용으로 Flask 서버만 띄운다.
     app.run(
         host="127.0.0.1",
         port=5000,

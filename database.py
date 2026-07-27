@@ -1,5 +1,5 @@
 import mysql.connector
-from config import MYSQL_CONFIG
+from settings import MYSQL_CONFIG
 
 # 지원 현황 상태값
 STATUS_CHOICES = ["미확인", "관심있음", "지원함", "제외"]
@@ -21,6 +21,7 @@ class DB:
         self._migrate_legacy_status_to_per_user()
         self._ensure_schedule_table()
         self._ensure_company_analysis_table()
+        self._ensure_crawl_request_table()
 
     # ------------------------------------------------------------
     # 테이블 / 인덱스 준비
@@ -554,11 +555,13 @@ class DB:
     def get_due_schedules(self, current_time, today):
         """
         current_time: "HH:MM" 형식 문자열, today: date 객체.
-        오늘 아직 실행되지 않은, 지금 이 시각에 예약된 스케줄들을 반환.
+        오늘 아직 실행되지 않은, 이미 지정 시각이 지난 스케줄들을 반환.
+        (worker.py가 GitHub Actions cron으로 몇 분 간격으로 폴링하므로,
+        정확히 같은 분에 실행된다는 보장이 없어 '이하'로 비교한다.)
         """
         self.dict_cursor.execute("""
             SELECT * FROM schedule_setting
-            WHERE enabled = 1 AND schedule_time = %s
+            WHERE enabled = 1 AND schedule_time <= %s
               AND (last_run_date IS NULL OR last_run_date != %s)
         """, (current_time, today))
         return self.dict_cursor.fetchall()
@@ -569,6 +572,59 @@ class DB:
             (run_date, user_id),
         )
         self.conn.commit()
+
+    # ------------------------------------------------------------
+    # 즉시 크롤링 요청 대기열 (웹에서 요청 -> GitHub Actions 워커가 처리)
+    # ------------------------------------------------------------
+    def _ensure_crawl_request_table(self):
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS crawl_request (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            job_categories VARCHAR(255) NOT NULL DEFAULT '',
+            locations VARCHAR(255) NOT NULL DEFAULT '',
+            experiences VARCHAR(255) NOT NULL DEFAULT '',
+            educations VARCHAR(255) NOT NULL DEFAULT '',
+            job_types VARCHAR(255) NOT NULL DEFAULT '',
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            found_count INT NULL,
+            saved_count INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processed_at TIMESTAMP NULL,
+            FOREIGN KEY (user_id) REFERENCES app_user(id)
+        )
+        """)
+        self.conn.commit()
+
+    def create_crawl_request(self, user_id, job_categories, locations,
+                              experiences, educations, job_types):
+        self.cursor.execute("""
+            INSERT INTO crawl_request
+            (user_id, job_categories, locations, experiences, educations, job_types)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (user_id, job_categories, locations, experiences, educations, job_types))
+        self.conn.commit()
+
+    def get_pending_crawl_requests(self):
+        self.dict_cursor.execute(
+            "SELECT * FROM crawl_request WHERE status = 'pending' ORDER BY created_at"
+        )
+        return self.dict_cursor.fetchall()
+
+    def mark_crawl_request_done(self, request_id, saved, found):
+        self.cursor.execute("""
+            UPDATE crawl_request
+            SET status = 'done', found_count = %s, saved_count = %s, processed_at = NOW()
+            WHERE id = %s
+        """, (found, saved, request_id))
+        self.conn.commit()
+
+    def get_recent_crawl_requests(self, user_id, limit=5):
+        self.dict_cursor.execute("""
+            SELECT * FROM crawl_request WHERE user_id = %s
+            ORDER BY created_at DESC LIMIT %s
+        """, (user_id, limit))
+        return self.dict_cursor.fetchall()
 
     def close(self):
         self.cursor.close()

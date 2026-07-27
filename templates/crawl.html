@@ -42,6 +42,31 @@ h2 {
     margin-bottom: 6px;
 }
 
+h3 {
+    margin-top: 40px;
+    margin-bottom: 8px;
+}
+
+table.requests {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+table.requests th, table.requests td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+}
+
+.status-pending {
+    color: #b8860b;
+}
+
+.status-done {
+    color: #2a7a2a;
+}
+
 .hint {
     color: #666;
     margin-bottom: 20px;
@@ -112,7 +137,7 @@ button {
 </div>
 
 <h2>크롤링 실행</h2>
-<p class="hint">조건을 선택하고 실행하면 선택한 모든 조합에 대해 즉시 크롤링이 진행됩니다. 완료까지 시간이 걸릴 수 있습니다.</p>
+<p class="hint">조건을 선택하고 요청하면 대기열에 등록되며, 워커가 최대 10분 이내에 처리합니다. 완료 여부는 아래 "최근 요청" 목록에서 새로고침해 확인하세요.</p>
 
 {% if error %}
 <p class="error">{{ error }}</p>
@@ -181,9 +206,40 @@ button {
         </div>
     </div>
 
-    <button type="submit">크롤링 시작</button>
+    <button type="submit">크롤링 요청</button>
 
 </form>
+
+<h3>최근 요청</h3>
+{% if recent_requests %}
+<table class="requests">
+    <thead>
+        <tr>
+            <th>요청 시각</th>
+            <th>직무</th>
+            <th>상태</th>
+            <th>결과</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in recent_requests %}
+        <tr>
+            <td>{{ r.created_at }}</td>
+            <td>{{ r.job_categories }}</td>
+            {% if r.status == 'done' %}
+            <td class="status-done">완료</td>
+            <td>발견 {{ r.found_count }}건 / 신규 저장 {{ r.saved_count }}건</td>
+            {% else %}
+            <td class="status-pending">대기중</td>
+            <td>-</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="hint">아직 요청 내역이 없습니다.</p>
+{% endif %}
 
 <p class="back-link"><a href="{{ url_for('index') }}">채용공고 목록으로 돌아가기</a></p>
 

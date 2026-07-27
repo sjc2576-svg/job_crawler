@@ -1,16 +1,16 @@
 """
 사용자별 Anthropic API 키처럼 DB에 저장은 하되 나중에 그대로 다시 꺼내 써야 하는
 값(비밀번호처럼 단방향 해시로 저장할 수 없는 값)을 암호화/복호화한다.
-SECRET_KEY(config.py)에서 유도한 키로 대칭 암호화(Fernet)한다.
-SECRET_KEY가 유출되면 이 값들도 함께 복호화될 수 있으므로, config.py를
-저장소에 커밋하지 않는 것(.gitignore)이 이 암호화의 전제 조건이다.
+SECRET_KEY(settings.py, 환경변수 기반)에서 유도한 키로 대칭 암호화(Fernet)한다.
+SECRET_KEY가 유출되면 이 값들도 함께 복호화될 수 있으므로, 실제 SECRET_KEY 값을
+저장소에 커밋하지 않는 것(.env는 .gitignore 대상)이 이 암호화의 전제 조건이다.
 """
 import base64
 import hashlib
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from config import SECRET_KEY
+from settings import SECRET_KEY
 
 _fernet_key = base64.urlsafe_b64encode(hashlib.sha256(SECRET_KEY.encode("utf-8")).digest())
 _fernet = Fernet(_fernet_key)

@@ -1,5 +1,4 @@
-flask
+selenium
+webdriver-manager
 mysql-connector-python
-cryptography
-google-genai
 python-dotenv

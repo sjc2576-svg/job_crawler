@@ -301,33 +301,6 @@ def crawl_condition(driver, db: DB, condition: dict, user_id: int):
     return total_saved, total_found
 
 
-def build_conditions(cat_sel, loc_sel, exp_sel, edu_sel, type_sel) -> list:
-    """
-    각 항목별로 선택된 (name, code) 튜플 리스트를 받아,
-    그 조합(cartesian product) 전체를 condition dict 리스트로 반환.
-    웹(app.py의 /crawl, 계정별 자동 스케줄)에서 사용.
-    """
-    conditions = []
-    for cat_name, cat_code in cat_sel:
-        for loc_name, loc_code in loc_sel:
-            for exp_name, exp_code in exp_sel:
-                for edu_name, edu_code in edu_sel:
-                    for type_name, type_code in type_sel:
-                        conditions.append({
-                            "name": f"{loc_name} {cat_name} ({exp_name}/{edu_name}/{type_name})",
-                            "cat_mcls": cat_code,
-                            "loc_mcd": loc_code,
-                            "exp_cd": exp_code,
-                            "edu_lv": edu_code,
-                            "job_type": type_code,
-                            "exp_name": exp_name,
-                            "edu_name": edu_name,
-                            "type_name": type_name,
-                        })
-
-    return conditions
-
-
 def run_conditions(driver, db: DB, conditions: list, user_id: int):
     """조건 리스트를 순서대로 크롤링해서 이 계정 소유로 저장.
     (신규 저장 건수, 발견 건수) 반환"""
@@ -344,8 +317,9 @@ def run_conditions(driver, db: DB, conditions: list, user_id: int):
 
 def run_web_conditions(conditions: list, user_id: int):
     """
-    app.py의 /crawl 라우트(및 계정별 자동 스케줄)에서 호출: 로그인한 계정 소유로
-    즉시 크롤링을 실행. (신규 저장 건수, 발견 건수) 반환
+    worker.py에서 호출 (대기열 요청 처리 및 계정별 자동 스케줄): 해당 계정 소유로
+    크롤링을 실행. Selenium/Chrome이 필요하므로 GitHub Actions 워커에서만 실행된다.
+    (신규 저장 건수, 발견 건수) 반환
     """
     if not conditions:
         return 0, 0
