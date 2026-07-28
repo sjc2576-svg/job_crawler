@@ -256,9 +256,8 @@ def crawl_condition(driver, db: DB, condition: dict, user_id: int):
     logger.info(f"URL: {url}")
 
     for attempt in range(1, MAX_RETRY + 1):
-        driver.get(url)
-
         try:
+            driver.get(url)
             WebDriverWait(driver, WAIT_TIMEOUT).until(
                 EC.presence_of_element_located(
                     (By.CSS_SELECTOR, "div.list_item[id^='rec-']")
@@ -335,6 +334,7 @@ def run_web_conditions(conditions: list, user_id: int):
     options.add_argument("--window-size=1920,1080")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver.set_page_load_timeout(30)
     db = DB()
 
     try:
