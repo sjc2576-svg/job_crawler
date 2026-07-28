@@ -326,8 +326,10 @@ def run_web_conditions(conditions: list, user_id: int):
 
     logger.info(f"=== 웹 요청 크롤링 시작 (계정 {user_id} / 조건 {len(conditions)}개) ===")
 
+    # 사람인이 headless Chrome을 감지해 렌더러를 멈춰버리므로(--headless 사용 시
+    # 항상 타임아웃), 일부러 headless를 안 쓰고 GitHub Actions 워크플로우가 제공하는
+    # 가상 디스플레이(Xvfb) 위에서 "진짜" 창 모드로 띄운다.
     options = Options()
-    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
