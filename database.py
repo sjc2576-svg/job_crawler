@@ -417,13 +417,18 @@ class DB:
             params.append(DEFAULT_STATUS)
             params.append(status)
 
-        if sort_by_deadline:
-            # 마감일을 아는 공고를 임박한 순서로 먼저, 모르는 공고(상시채용/채용시 등)는 뒤로
-            sql += " ORDER BY (jp.deadline_date IS NULL), jp.deadline_date ASC, jp.id DESC"
-        elif group_by_company:
+        if group_by_company:
+            # 회사별 보기는 회사명 그룹핑이 목적이라 관심있음 우선순위는 적용하지 않음
             sql += " ORDER BY jp.company, jp.id DESC"
         else:
-            sql += " ORDER BY jp.id DESC"
+            # 목록 보기는 '관심있음'으로 표시한 공고를 항상 최상단에 모으고,
+            # 그 안에서 선택한 정렬(기본/마감임박)을 그대로 적용
+            params.append(DEFAULT_STATUS)
+            interest_first = "(COALESCE(ujs.status, %s) = '관심있음') DESC"
+            if sort_by_deadline:
+                sql += f" ORDER BY {interest_first}, (jp.deadline_date IS NULL), jp.deadline_date ASC, jp.id DESC"
+            else:
+                sql += f" ORDER BY {interest_first}, jp.id DESC"
 
         self.dict_cursor.execute(sql, tuple(params))
         return self.dict_cursor.fetchall()

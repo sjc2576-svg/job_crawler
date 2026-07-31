@@ -191,8 +191,10 @@ def index():
         return f"DB ERROR : {e}"
 
 
-def _back_to_index():
-    """상태/메모/삭제 처리 후 원래 보고 있던 필터·화면·페이지로 되돌아가기"""
+def _back_to_index(page_override=None):
+    """상태/메모/삭제 처리 후 원래 보고 있던 필터·화면·페이지로 되돌아가기.
+    page_override: 목록 순서가 바뀌어 원래 보던 페이지 번호가 더 이상 의미 없어졌을 때
+    (예: '관심있음'으로 바꿔서 최상단으로 이동) 강제로 이동시킬 페이지."""
     params = {
         key: request.form.get(key, "")
         for key in ("region", "keyword", "condition_name", "filter_status", "view", "page", "sort")
@@ -204,7 +206,7 @@ def _back_to_index():
         condition_name=params["condition_name"] or None,
         status=params["filter_status"] or None,
         view=params["view"] or "list",
-        page=params["page"] or None,
+        page=page_override or params["page"] or None,
         sort=params["sort"] or None,
     ))
 
@@ -221,7 +223,12 @@ def set_status(job_id):
     db.update_status(session["user_id"], job_id, new_status)
     db.close()
 
-    return _back_to_index()
+    # '관심있음'으로 바꾸면 목록 보기 최상단으로 정렬되므로(get_jobs 참고),
+    # 원래 페이지 그대로 두면 눈에 안 띄니 1페이지로 보내서 실제로 이동한 걸 보여줌
+    is_list_view = request.form.get("view", "list") == "list"
+    page_override = "1" if (new_status == "관심있음" and is_list_view) else None
+
+    return _back_to_index(page_override=page_override)
 
 
 @app.route("/jobs/<int:job_id>/memo", methods=["POST"])
