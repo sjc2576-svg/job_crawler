@@ -133,7 +133,8 @@ def condition_matches(career_text: str, education_text: str, condition: dict) ->
 
 def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
     """현재 페이지에 보이는 채용공고를 추출해서, 조건에 맞는 것만 이 계정 소유로 저장.
-    (신규 저장 건수, 발견 건수) 반환"""
+    (신규 저장 건수, 발견 건수, 조건에 맞아 이번에 실제로 보인 링크 집합) 반환.
+    마지막 값은 마감된 공고 정리(prune_missing_jobs)에 쓰인다."""
     name = condition.get("name", "이름없음")
 
     jobs = driver.find_elements(
@@ -141,6 +142,7 @@ def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
     )
     found = len(jobs)
     saved = 0
+    seen_links = set()
 
     for job in jobs:
         try:
@@ -171,6 +173,8 @@ def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
                 logger.info(f"  [조건불일치 스킵] {title} ({career_text} / {education_text})")
                 continue
 
+            seen_links.add(link)
+
             is_new = db.insert_job(
                 user_id, title, company, location, link,
                 condition_name=name,
@@ -186,7 +190,7 @@ def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
         except Exception as e:
             logger.warning(f"  스킵(필드 추출 실패): {e}")
 
-    return saved, found
+    return saved, found, seen_links
 
 
 def go_to_next_page(driver, next_page_num: int) -> bool:
@@ -281,15 +285,19 @@ def crawl_condition(driver, db: DB, condition: dict, user_id: int):
 
     total_saved = 0
     total_found = 0
+    all_seen_links = set()
+    truncated = False
 
     for page_num in range(1, MAX_PAGES + 1):
-        saved, found = extract_jobs_on_page(driver, db, condition, user_id)
+        saved, found, seen_links = extract_jobs_on_page(driver, db, condition, user_id)
         total_saved += saved
         total_found += found
+        all_seen_links |= seen_links
         logger.info(f"[{name}] {page_num}페이지: 발견 {found}건 / 신규 저장 {saved}건")
 
         if page_num == MAX_PAGES:
             logger.info(f"[{name}] 설정된 최대 페이지({MAX_PAGES})에 도달, 다음 조건으로 이동")
+            truncated = True  # 더 있을 수도 있으므로 마감 정리는 건너뜀
             break
 
         moved = go_to_next_page(driver, page_num + 1)
@@ -298,6 +306,15 @@ def crawl_condition(driver, db: DB, condition: dict, user_id: int):
             break
 
     logger.info(f"[{name}] 조건 합계: 신규 저장 {total_saved}건 / 발견 {total_found}건")
+
+    if not truncated:
+        # 이 조건의 결과를 끝까지 다 확인했을 때만, 이번에 안 보인 기존 공고를
+        # 마감(또는 내려감)으로 간주해 정리한다. 페이지 제한에 걸려 중간에
+        # 멈췄다면 아직 못 본 뒷페이지 공고까지 잘못 지울 수 있어 건너뛴다.
+        pruned = db.prune_missing_jobs(user_id, name, all_seen_links)
+        if pruned:
+            logger.info(f"[{name}] 마감/누락 공고 정리: {pruned}건 삭제")
+
     return total_saved, total_found
 
 

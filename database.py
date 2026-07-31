@@ -302,6 +302,16 @@ class DB:
         self.conn.commit()
         return deleted
 
+    def prune_missing_jobs(self, user_id, condition_name, seen_links):
+        """이 계정의 이 조건(condition_name)으로 저장된 공고 중, 이번 크롤링에서
+        더 이상 보이지 않는(=마감되었거나 내려간) 공고를 삭제. 반환값: 삭제된 행 수."""
+        self.cursor.execute(
+            "SELECT id, link FROM job_posting WHERE user_id = %s AND condition_name = %s",
+            (user_id, condition_name),
+        )
+        stale_ids = [job_id for job_id, link in self.cursor.fetchall() if link not in seen_links]
+        return self.delete_jobs(user_id, stale_ids)
+
     # ------------------------------------------------------------
     # 저장
     # ------------------------------------------------------------
