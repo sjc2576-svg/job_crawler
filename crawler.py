@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from datetime import date, timedelta
 from logging.handlers import RotatingFileHandler
 from urllib.parse import urlencode
 
@@ -123,6 +124,45 @@ def matches_education(education_text: str, desired: str) -> bool:
     return any(_norm(k) in t for k in keywords)
 
 
+_DEADLINE_DATE_RE = re.compile(r"(\d{1,2})[.\/](\d{1,2})")
+_DEADLINE_DDAY_RE = re.compile(r"D-(\d+)", re.IGNORECASE)
+
+
+def parse_deadline(raw_text: str, today: date = None):
+    """사람인 마감일 표시(예: '~08.26(수)', 'D-2', '오늘마감')를 실제 날짜로 변환.
+    '상시채용'/'채용시'처럼 특정 날짜가 없는 경우엔 None을 반환하며, 이런 공고는
+    날짜 대신 재크롤링 시 목록에 남아있는지로만 마감 여부를 판단한다(prune_missing_jobs)."""
+    if today is None:
+        today = date.today()
+
+    text = (raw_text or "").strip()
+    if not text or "상시채용" in text or "채용시" in text:
+        return None
+
+    if "오늘마감" in text:
+        return today
+    if "내일마감" in text:
+        return today + timedelta(days=1)
+
+    dday = _DEADLINE_DDAY_RE.search(text)
+    if dday:
+        return today + timedelta(days=int(dday.group(1)))
+
+    m = _DEADLINE_DATE_RE.search(text)
+    if m:
+        month, day = int(m.group(1)), int(m.group(2))
+        try:
+            deadline = date(today.year, month, day)
+        except ValueError:
+            return None
+        if deadline < today:
+            # 예: 12월에 크롤링했는데 마감이 1월 -> 올해가 아니라 내년
+            deadline = date(today.year + 1, month, day)
+        return deadline
+
+    return None
+
+
 def condition_matches(career_text: str, education_text: str, condition: dict) -> bool:
     return (
         matches_experience(career_text, condition.get("exp_name"))
@@ -169,6 +209,13 @@ def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
             except Exception:
                 link = job.find_element(By.TAG_NAME, "a").get_attribute("href")
 
+            try:
+                deadline_text = job.find_element(
+                    By.CSS_SELECTOR, ".support_detail .date"
+                ).text.strip()
+            except Exception:
+                deadline_text = ""
+
             if not condition_matches(career_text, education_text, condition):
                 logger.info(f"  [조건불일치 스킵] {title} ({career_text} / {education_text})")
                 continue
@@ -180,6 +227,8 @@ def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
                 condition_name=name,
                 career=career_text,
                 education=education_text,
+                deadline_text=deadline_text or None,
+                deadline_date=parse_deadline(deadline_text),
             )
 
             if is_new:

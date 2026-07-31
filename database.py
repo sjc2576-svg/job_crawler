@@ -210,6 +210,8 @@ class DB:
         for column, ddl in [
             ("career", "ALTER TABLE job_posting ADD COLUMN career VARCHAR(255)"),
             ("education", "ALTER TABLE job_posting ADD COLUMN education VARCHAR(255)"),
+            ("deadline_text", "ALTER TABLE job_posting ADD COLUMN deadline_text VARCHAR(50)"),
+            ("deadline_date", "ALTER TABLE job_posting ADD COLUMN deadline_date DATE NULL"),
         ]:
             self.cursor.execute("""
             SELECT COUNT(*) FROM information_schema.columns
@@ -303,32 +305,66 @@ class DB:
         return deleted
 
     def prune_missing_jobs(self, user_id, condition_name, seen_links):
-        """이 계정의 이 조건(condition_name)으로 저장된 공고 중, 이번 크롤링에서
-        더 이상 보이지 않는(=마감되었거나 내려간) 공고를 삭제. 반환값: 삭제된 행 수."""
+        """이 계정의 이 조건(condition_name)으로 저장된 공고 중 마감일을 알 수 없는
+        것들(deadline_date가 NULL: 상시채용/채용시/형식 파싱 실패)만 대상으로,
+        이번 크롤링에서 더 이상 보이지 않으면 마감(또는 내려감)으로 간주해 삭제한다.
+        마감일을 알고 있는 공고는 delete_expired_jobs가 날짜로 직접 정리하므로
+        여기서 다시 건드리지 않는다. 반환값: 삭제된 행 수."""
         self.cursor.execute(
-            "SELECT id, link FROM job_posting WHERE user_id = %s AND condition_name = %s",
+            """
+            SELECT id, link FROM job_posting
+            WHERE user_id = %s AND condition_name = %s AND deadline_date IS NULL
+            """,
             (user_id, condition_name),
         )
         stale_ids = [job_id for job_id, link in self.cursor.fetchall() if link not in seen_links]
         return self.delete_jobs(user_id, stale_ids)
 
+    def delete_expired_jobs(self):
+        """마감일(deadline_date)이 지난 공고를 계정 구분 없이 전부 삭제.
+        실제 날짜를 알고 있으므로 크롤링이 몇 페이지까지 갔는지와 무관하게
+        안전하게 지울 수 있다. 반환값: 삭제된 job_posting 행 수."""
+        self.cursor.execute(
+            "SELECT id FROM job_posting WHERE deadline_date IS NOT NULL AND deadline_date < CURDATE()"
+        )
+        expired_ids = [row[0] for row in self.cursor.fetchall()]
+        if not expired_ids:
+            return 0
+
+        placeholders = ", ".join(["%s"] * len(expired_ids))
+        self.cursor.execute(
+            f"DELETE FROM user_job_state WHERE job_id IN ({placeholders})",
+            tuple(expired_ids),
+        )
+        self.cursor.execute(
+            f"DELETE FROM job_posting WHERE id IN ({placeholders})",
+            tuple(expired_ids),
+        )
+        deleted = self.cursor.rowcount
+        self.conn.commit()
+        return deleted
+
     # ------------------------------------------------------------
     # 저장
     # ------------------------------------------------------------
     def insert_job(self, user_id, title, company, location, link, condition_name=None,
-                   career=None, education=None):
+                   career=None, education=None, deadline_text=None, deadline_date=None):
         """
         이 계정이 이미 저장해둔 link면 건너뜁니다 (계정별 중복 방지).
+        deadline_date를 알고 있으면 delete_expired_jobs가 마감일이 지났을 때 정리하고,
+        모르면(상시채용/채용시 등) prune_missing_jobs가 재크롤링 결과 기준으로 정리한다.
         반환값: 새로 저장됐으면 True, 이미 있어서 건너뛰었으면 False
         """
         sql = """
         INSERT IGNORE INTO job_posting
-        (user_id, title, company, location, link, condition_name, career, education)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        (user_id, title, company, location, link, condition_name, career, education,
+         deadline_text, deadline_date)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         self.cursor.execute(
             sql,
-            (user_id, title, company, location, link, condition_name, career, education),
+            (user_id, title, company, location, link, condition_name, career, education,
+             deadline_text, deadline_date),
         )
         self.conn.commit()
 

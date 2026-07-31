@@ -44,6 +44,16 @@ def process_pending_requests():
             logger.exception(f"[대기열 처리 실패] request_id={req['id']}")
 
 
+def cleanup_expired_jobs():
+    db = DB()
+    try:
+        deleted = db.delete_expired_jobs()
+        if deleted:
+            logger.info(f"[마감일 정리] 마감일 지난 공고 {deleted}건 삭제")
+    finally:
+        db.close()
+
+
 def process_due_schedules():
     now = datetime.now()
     current_time = now.strftime("%H:%M")
@@ -80,3 +90,4 @@ def process_due_schedules():
 if __name__ == "__main__":
     process_pending_requests()
     process_due_schedules()
+    cleanup_expired_jobs()
