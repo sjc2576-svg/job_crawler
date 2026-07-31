@@ -233,7 +233,10 @@ def extract_jobs_on_page(driver, db: DB, condition: dict, user_id: int):
 
             if is_new:
                 saved += 1
-                logger.info(f"  [신규] {title} / {company} ({career_text} / {education_text})")
+                logger.info(
+                    f"  [신규] {title} / {company} ({career_text} / {education_text}) "
+                    f"마감:{deadline_text or '-'}"
+                )
             # 이미 있는 공고면 조용히 건너뜀 (중복 방지)
 
         except Exception as e:

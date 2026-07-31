@@ -387,7 +387,7 @@ class DB:
         """
         sql = """
         SELECT jp.id, jp.title, jp.company, jp.location, jp.link, jp.condition_name,
-               jp.career, jp.education,
+               jp.career, jp.education, jp.deadline_text,
                COALESCE(ujs.status, %s) AS status,
                ujs.memo AS memo,
                ujs.applied_at AS applied_at,

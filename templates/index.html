@@ -287,6 +287,7 @@ button.danger {
     <td>{{ job.location }}</td>
     <td>{{ job.career or "-" }}</td>
     <td>{{ job.education or "-" }}</td>
+    <td>{{ job.deadline_text or "-" }}</td>
     <td>{{ job.condition_name or "-" }}</td>
     {{ status_cell(job) }}
     <td>{{ job.applied_at.strftime('%Y-%m-%d') if job.applied_at else "-" }}</td>
@@ -310,6 +311,7 @@ button.danger {
                 <th>지역</th>
                 <th>경력/근무형태</th>
                 <th>학력</th>
+                <th>마감일</th>
                 <th>수집 조건</th>
                 <th>상태</th>
                 <th>지원일</th>
@@ -337,6 +339,7 @@ button.danger {
             <th>지역</th>
             <th>경력/근무형태</th>
             <th>학력</th>
+            <th>마감일</th>
             <th>수집 조건</th>
             <th>상태</th>
             <th>지원일</th>
