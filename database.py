@@ -374,7 +374,7 @@ class DB:
     # 조회
     # ------------------------------------------------------------
     def get_jobs(self, user_id, region=None, keyword=None, condition_name=None,
-                 status=None, group_by_company=False):
+                 status=None, group_by_company=False, sort_by_deadline=False):
         """
         user_id: 지원 현황(상태/메모)을 이 계정 기준으로 붙여서 반환
         region: 위치(location)에 포함된 문자열로 필터 (예: '울산')
@@ -382,12 +382,13 @@ class DB:
         condition_name: 특정 검색 조건으로 수집된 데이터만 필터
         status: 지원 현황 상태로 필터 (STATUS_CHOICES 중 하나)
         group_by_company: True면 회사명 기준으로 정렬해서 반환 (회사별 보기용)
+        sort_by_deadline: True면 마감일이 가까운 순으로 정렬 (마감일 모르는 공고는 맨 뒤)
 
         반환값: 각 공고를 dict로 담은 리스트
         """
         sql = """
         SELECT jp.id, jp.title, jp.company, jp.location, jp.link, jp.condition_name,
-               jp.career, jp.education, jp.deadline_text,
+               jp.career, jp.education, jp.deadline_text, jp.deadline_date,
                COALESCE(ujs.status, %s) AS status,
                ujs.memo AS memo,
                ujs.applied_at AS applied_at,
@@ -416,7 +417,10 @@ class DB:
             params.append(DEFAULT_STATUS)
             params.append(status)
 
-        if group_by_company:
+        if sort_by_deadline:
+            # 마감일을 아는 공고를 임박한 순서로 먼저, 모르는 공고(상시채용/채용시 등)는 뒤로
+            sql += " ORDER BY (jp.deadline_date IS NULL), jp.deadline_date ASC, jp.id DESC"
+        elif group_by_company:
             sql += " ORDER BY jp.company, jp.id DESC"
         else:
             sql += " ORDER BY jp.id DESC"

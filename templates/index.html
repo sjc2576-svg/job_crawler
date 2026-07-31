@@ -159,6 +159,11 @@ button.danger {
     color: #a33;
 }
 
+.deadline-soon {
+    color: #c0392b;
+    font-weight: bold;
+}
+
 </style>
 
 </head>
@@ -212,6 +217,11 @@ button.danger {
         {% endfor %}
     </select>
 
+    <select name="sort">
+        <option value="" {% if not selected_sort %}selected{% endif %}>기본 정렬</option>
+        <option value="deadline" {% if selected_sort == "deadline" %}selected{% endif %}>마감임박순</option>
+    </select>
+
     <button type="submit">필터 적용</button>
     <a href="/">초기화</a>
 
@@ -221,9 +231,9 @@ button.danger {
 
 <div class="view-tabs">
     <a class="{% if view == 'list' %}active{% endif %}"
-       href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, view='list') }}">목록 보기</a>
+       href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, sort=selected_sort, view='list') }}">목록 보기</a>
     <a class="{% if view == 'company' %}active{% endif %}"
-       href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, view='company') }}">회사별 보기</a>
+       href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, sort=selected_sort, view='company') }}">회사별 보기</a>
 </div>
 
 <!--
@@ -238,6 +248,7 @@ button.danger {
     <input type="hidden" name="filter_status" value="{{ selected_status }}">
     <input type="hidden" name="view" value="{{ view }}">
     <input type="hidden" name="page" value="{{ page }}">
+    <input type="hidden" name="sort" value="{{ selected_sort }}">
     <div class="bulk-toolbar">
         <button type="button" onclick="document.querySelectorAll('input[name=job_ids]').forEach(c => c.checked = true)">전체 선택</button>
         <button type="button" onclick="document.querySelectorAll('input[name=job_ids]').forEach(c => c.checked = false)">전체 해제</button>
@@ -254,6 +265,7 @@ button.danger {
         <input type="hidden" name="filter_status" value="{{ selected_status }}">
         <input type="hidden" name="view" value="{{ view }}">
         <input type="hidden" name="page" value="{{ page }}">
+        <input type="hidden" name="sort" value="{{ selected_sort }}">
         <select name="new_status" onchange="this.form.submit()">
             {% for choice in status_choices %}
             <option value="{{ choice }}" {% if choice == job.status %}selected{% endif %}>{{ choice }}</option>
@@ -272,6 +284,7 @@ button.danger {
         <input type="hidden" name="filter_status" value="{{ selected_status }}">
         <input type="hidden" name="view" value="{{ view }}">
         <input type="hidden" name="page" value="{{ page }}">
+        <input type="hidden" name="sort" value="{{ selected_sort }}">
         <input type="text" name="memo" value="{{ job.memo or '' }}" placeholder="메모 (지원하고 싶은 직무/강조 포인트)">
         <button type="submit">저장</button>
     </form>
@@ -287,7 +300,7 @@ button.danger {
     <td>{{ job.location }}</td>
     <td>{{ job.career or "-" }}</td>
     <td>{{ job.education or "-" }}</td>
-    <td>{{ job.deadline_text or "-" }}</td>
+    <td class="{% if job.deadline_date and (job.deadline_date - today).days <= 3 %}deadline-soon{% endif %}">{{ job.deadline_text or "-" }}</td>
     <td>{{ job.condition_name or "-" }}</td>
     {{ status_cell(job) }}
     <td>{{ job.applied_at.strftime('%Y-%m-%d') if job.applied_at else "-" }}</td>
@@ -357,7 +370,7 @@ button.danger {
 
 <div class="pagination">
     {% if page > 1 %}
-    <a href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, view=view, page=page-1) }}">이전 페이지</a>
+    <a href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, sort=selected_sort, view=view, page=page-1) }}">이전 페이지</a>
     {% else %}
     <span class="disabled">이전 페이지</span>
     {% endif %}
@@ -365,7 +378,7 @@ button.danger {
     <span class="page-info">{{ page }} / {{ total_pages }}</span>
 
     {% if page < total_pages %}
-    <a href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, view=view, page=page+1) }}">다음 페이지</a>
+    <a href="{{ url_for('index', region=selected_region, keyword=selected_keyword, condition_name=selected_condition, status=selected_status, sort=selected_sort, view=view, page=page+1) }}">다음 페이지</a>
     {% else %}
     <span class="disabled">다음 페이지</span>
     {% endif %}

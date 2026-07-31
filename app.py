@@ -1,3 +1,4 @@
+from datetime import date
 from functools import wraps
 
 import mysql.connector
@@ -138,6 +139,7 @@ def index():
     condition_name = request.args.get("condition_name", "").strip() or None
     status = request.args.get("status", "").strip() or None
     view = request.args.get("view", "list").strip() or "list"
+    sort = request.args.get("sort", "").strip() or None
 
     try:
         page = int(request.args.get("page", "1"))
@@ -155,6 +157,7 @@ def index():
             condition_name=condition_name,
             status=status,
             group_by_company=(view == "company"),
+            sort_by_deadline=(sort == "deadline"),
         )
         condition_names = db.get_condition_names(session["user_id"])
 
@@ -178,7 +181,9 @@ def index():
             selected_keyword=keyword or "",
             selected_condition=condition_name or "",
             selected_status=status or "",
+            selected_sort=sort or "",
             view=view,
+            today=date.today(),
             username=session.get("username"),
         )
 
@@ -190,7 +195,7 @@ def _back_to_index():
     """상태/메모/삭제 처리 후 원래 보고 있던 필터·화면·페이지로 되돌아가기"""
     params = {
         key: request.form.get(key, "")
-        for key in ("region", "keyword", "condition_name", "filter_status", "view", "page")
+        for key in ("region", "keyword", "condition_name", "filter_status", "view", "page", "sort")
     }
     return redirect(url_for(
         "index",
@@ -200,6 +205,7 @@ def _back_to_index():
         status=params["filter_status"] or None,
         view=params["view"] or "list",
         page=params["page"] or None,
+        sort=params["sort"] or None,
     ))
 
 
