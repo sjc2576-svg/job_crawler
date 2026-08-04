@@ -350,16 +350,27 @@ class DB:
     def insert_job(self, user_id, title, company, location, link, condition_name=None,
                    career=None, education=None, deadline_text=None, deadline_date=None):
         """
-        이 계정이 이미 저장해둔 link면 건너뜁니다 (계정별 중복 방지).
+        이 계정이 이미 저장해둔 link면 새로 넣지 않고 마감일 등 최신 정보로 갱신한다
+        (계정별 중복 방지). 그래야 재크롤링 시 D-day가 줄어들거나 마감일이 확정되는
+        변화가 기존 행에도 반영된다.
         deadline_date를 알고 있으면 delete_expired_jobs가 마감일이 지났을 때 정리하고,
         모르면(상시채용/채용시 등) prune_missing_jobs가 재크롤링 결과 기준으로 정리한다.
-        반환값: 새로 저장됐으면 True, 이미 있어서 건너뛰었으면 False
+        반환값: 새로 저장됐으면 True, 이미 있어서 갱신만 했으면 False
         """
         sql = """
-        INSERT IGNORE INTO job_posting
+        INSERT INTO job_posting
         (user_id, title, company, location, link, condition_name, career, education,
          deadline_text, deadline_date)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            title = VALUES(title),
+            company = VALUES(company),
+            location = VALUES(location),
+            condition_name = VALUES(condition_name),
+            career = VALUES(career),
+            education = VALUES(education),
+            deadline_text = VALUES(deadline_text),
+            deadline_date = VALUES(deadline_date)
         """
         self.cursor.execute(
             sql,
@@ -368,7 +379,9 @@ class DB:
         )
         self.conn.commit()
 
-        return self.cursor.rowcount > 0
+        # MySQL: rowcount는 신규 삽입이면 1, 기존 행이 실제로 바뀌어 갱신됐으면 2,
+        # 기존 행과 값이 동일해 변화가 없으면 0을 반환한다.
+        return self.cursor.rowcount == 1
 
     # ------------------------------------------------------------
     # 조회
